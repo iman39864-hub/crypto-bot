@@ -407,16 +407,19 @@ def automated_price_monitor():
                 if not curr:
                     continue
 
+                # بررسی حد ضرر (SL)
                 hit_sl = (p['type'] == 'LONG' and curr <= p['sl']) or (p['type'] == 'SHORT' and curr >= p['sl'])
                 if hit_sl:
                     close_position_automatically(p, curr, reason="حد ضرر (SL)")
                     continue
 
+                # بررسی هدف نهایی (TP3) -> بستن کامل معامله با سود
                 hit_tp3 = (p['type'] == 'LONG' and curr >= p['tp3']) or (p['type'] == 'SHORT' and curr <= p['tp3'])
                 if hit_tp3:
                     close_position_automatically(p, curr, reason="هدف نهایی (TP3)")
                     continue
 
+                # بررسی TP1 (فقط ریسک‌فری کردن و باز نگه داشتن معامله)
                 if not p.get('hit_tp1', False):
                     hit_tp1_cond = (p['type'] == 'LONG' and curr >= p['tp1']) or (p['type'] == 'SHORT' and curr <= p['tp1'])
                     if hit_tp1_cond:
@@ -424,10 +427,32 @@ def automated_price_monitor():
                         p['sl'] = p['entry']
                         p['risk_free'] = True
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                        
+                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n🛡️ حد ضرر به نقطه ورود منتقل گردید (ریسک‌فری شد) اما معامله همچنان باز است."
                         if ADMIN_CHAT_ID:
-                            send_bale_message(ADMIN_CHAT_ID, f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n🛡️ حد ضرر به نقطه ورود منتقل گردید (ریسک‌فری شد).")
-                        if p.get('msg_id'):
+                            send_bale_message(ADMIN_CHAT_ID, msg_tp1)
+                        if CHANNEL_ID:
+                            send_bale_message(CHANNEL_ID, msg_tp1)
+                            
+                        if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+
+                # بررسی TP2 (ثبت لمس، بدون بستن معامله)
+                if not p.get('hit_tp2', False):
+                    hit_tp2_cond = (p['type'] == 'LONG' and curr >= p['tp2']) or (p['type'] == 'SHORT' and curr <= p['tp2'])
+                    if hit_tp2_cond:
+                        p['hit_tp2'] = True
+                        save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                        
+                        msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n📈 معامله همچنان برای رسیدن به TP3 باز است."
+                        if ADMIN_CHAT_ID:
+                            send_bale_message(ADMIN_CHAT_ID, msg_tp2)
+                        if CHANNEL_ID:
+                            send_bale_message(CHANNEL_ID, msg_tp2)
+                            
+                        if p.get('msg_id') and ADMIN_CHAT_ID:
+                            edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+
         except Exception as e:
             time.sleep(5)
 
@@ -494,7 +519,7 @@ def start_bot():
                                     f"📊 گزارش حساب دمو و وین‌ریت:\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
-                                    f"🎯 کل معاملات: {total_trades}\n"
+                                    f"🎯 کل معاملات بسته شده: {total_trades}\n"
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
                                     f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
                                     f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n"
@@ -523,13 +548,12 @@ def start_bot():
                                             p['risk_free'] = True
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید شد.")
+                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و ریسک‌فری شد (معامله باز است).")
                                         elif action_type == 'tp2':
-                                            p['heat_tp2'] = True
                                             p['hit_tp2'] = True
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد.")
+                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد (معامله باز است).")
                                         elif action_type == 'tp3' or action_type == 'close':
                                             curr_p = fetch_current_price(sym) or p['entry']
                                             close_position_automatically(p, curr_p, reason="بستن دستی / اتمام معامله")
