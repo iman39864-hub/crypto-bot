@@ -28,7 +28,7 @@ def log_error_to_bale(error_msg):
     if len(ERROR_LOGS) > 20:
         ERROR_LOGS.pop(0)
     if ADMIN_CHAT_ID:
-        send_bale_message(ADMIN_CHAT_ID, f"⚠️ *خطای سیستمی در ربات:*\n`{error_msg}`")
+        send_bale_message(ADMIN_CHAT_ID, f"⚠️ **خطای سیستمی در ربات:**\n`{error_msg}`")
 
 @app.route('/')
 def home():
@@ -117,9 +117,7 @@ def get_signal_keyboard(symbol, p_data=None):
             ],
             [
                 {"text": t3, "callback_data": f"tp3_{symbol}"},
-                {"text":
-
-"🛑 بستن دستی (SL)", "callback_data": f"close_{symbol}"}
+                {"text": "🛑 بستن دستی (SL)", "callback_data": f"close_{symbol}"}
             ]
         ]
     }
@@ -179,8 +177,8 @@ def calculate_indicators_with_adx(df, period=14):
     df['smooth_minus_dm'] = pd.Series(df['minus_dm']).rolling(window=period).mean()
     df['smooth_tr'] = df['tr'].rolling(window=period).mean()
 
-    df['plus_di'] = (df['smooth_plus_dm'] / (df['smooth_tr'] + 1e-10))  100
-    df['minus_di'] = (df['smooth_minus_dm'] / (df['smooth_tr'] + 1e-10))  100
+    df['plus_di'] = (df['smooth_plus_dm'] / (df['smooth_tr'] + 1e-10)) * 100
+    df['minus_di'] = (df['smooth_minus_dm'] / (df['smooth_tr'] + 1e-10)) * 100
 
     dx_den = (df['plus_di'] + df['minus_di'])
     df['dx'] = (abs(df['plus_di'] - df['minus_di']) / (dx_den + 1e-10)) * 100
@@ -210,9 +208,7 @@ def close_position_automatically(p, exit_price, reason="SL_HIT"):
     else:
         pnl_percent = (entry - exit_price) / entry
 
-    pnl_usd = trade_s
-
-ize  pnl_percent
+    pnl_usd = trade_size * pnl_percent
     PAPER_BALANCE += pnl_usd
 
     p['status'] = 'CLOSED'
@@ -229,7 +225,7 @@ ize  pnl_percent
         f"💵 قیمت ورود: {entry:.4f}\n"
         f"🏁 قیمت خروج ({reason}): {exit_price:.4f}\n"
         f"💰 سود / زیان معامله: {pnl_usd:+.2f} $\n"
-        f"💳 موجودی جدید حساب دمو: {PAPER_BALANCE:.2f} $\n"
+        f"💳 **موجودی جدید حساب دمو:** {PAPER_BALANCE:.2f} $\n"
         f"──────────────────────"
     )
     if ADMIN_CHAT_ID:
@@ -272,10 +268,10 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                 realtime_price = fetch_current_price(symbol) or current_close
 
                 if is_long:
-                    sl = min(major_support - (0.3  atr), realtime_price - (1.0  atr))
-                    tp1 = realtime_price + (1.5  atr)
-                    tp2 = realtime_price + (3.0  atr)
-                    tp3 = realtime_price + (4.5  atr)
+                    sl = min(major_support - (0.3 * atr), realtime_price - (1.0 * atr))
+                    tp1 = realtime_price + (1.5 * atr)
+                    tp2 = realtime_price + (3.0 * atr)
+                    tp3 = realtime_price + (4.5 * atr)
                     signals_found += 1
 
                     pos = {
@@ -301,8 +297,7 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                     if ADMIN_CHAT_ID:
                         res = send_bale_message(ADMIN_CHAT_ID, msg, reply_markup=get_signal_keyboard(symbol, pos))
                         try:
-
-if res and 'result' in res:
+                            if res and 'result' in res:
                                 pos['msg_id'] = res['result']['message_id']
                                 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                         except: pass
@@ -310,10 +305,10 @@ if res and 'result' in res:
                         send_bale_message(CHANNEL_ID, msg)
 
                 elif is_short:
-                    sl = max(major_resistance + (0.3  atr), realtime_price + (1.0  atr))
-                    tp1 = realtime_price - (1.5  atr)
-                    tp2 = realtime_price - (3.0  atr)
-                    tp3 = realtime_price - (4.5  atr)
+                    sl = max(major_resistance + (0.3 * atr), realtime_price + (1.0 * atr))
+                    tp1 = realtime_price - (1.5 * atr)
+                    tp2 = realtime_price - (3.0 * atr)
+                    tp3 = realtime_price - (4.5 * atr)
                     signals_found += 1
 
                     pos = {
@@ -363,10 +358,10 @@ def tradingview_webhook():
         position_type = data.get('type', 'LONG').upper()
 
         price = fetch_current_price(symbol) or float(data.get('price', 60000.0))
-        sl = float(data.get('sl', price  0.99 if position_type == 'LONG' else price  1.01))
-        tp1 = float(data.get('tp1', price  1.01 if position_type == 'LONG' else price  0.99))
-        tp2 = float(data.get('tp2', price  1.02 if position_type == 'LONG' else price  0.98))
-        tp3 = float(data.get('tp3', price  1.03 if position_type == 'LONG' else price * 0.97))
+        sl = float(data.get('sl', price * 0.99 if position_type == 'LONG' else price * 1.01))
+        tp1 = float(data.get('tp1', price * 1.01 if position_type == 'LONG' else price * 0.99))
+        tp2 = float(data.get('tp2', price * 1.02 if position_type == 'LONG' else price * 0.98))
+        tp3 = float(data.get('tp3', price * 1.03 if position_type == 'LONG' else price * 0.97))
 
         if any(p['symbol'] == symbol and p['status'] == 'ACTIVE' for p in ACTIVE_POSITIONS):
             return jsonify({"status": "error", "message": "Active position already exists for this symbol"}), 400
@@ -382,8 +377,7 @@ def tradingview_webhook():
 
         icon = "🚀" if position_type == 'LONG' else "📉"
         msg = (
-
-f"{icon} سیگنال تریدینگ‌ویو ({position_type}) \n"
+            f"{icon} سیگنال تریدینگ‌ویو ({position_type}) \n"
             f"──────────────────────\n"
             f"🔹 نماد: {symbol}\n"
             f"💵 قیمت ورود: {price:.4f}\n"
@@ -440,13 +434,13 @@ def automated_price_monitor():
                         p['sl'] = p['entry']
                         p['risk_free'] = True
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-
+                        
                         msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n🛡️ حد ضرر به نقطه ورود منتقل گردید (ریسک‌فری شد) اما معامله همچنان باز است."
                         if ADMIN_CHAT_ID:
                             send_bale_message(ADMIN_CHAT_ID, msg_tp1)
                         if CHANNEL_ID:
                             send_bale_message(CHANNEL_ID, msg_tp1)
-
+                            
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
@@ -455,20 +449,18 @@ def automated_price_monitor():
                     if hit_tp2_cond:
                         p['hit_tp2'] = True
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-
+                        
                         msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n📈 معامله همچنان برای رسیدن به TP3 باز است."
                         if ADMIN_CHAT_ID:
                             send_bale_message(ADMIN_CHAT_ID, msg_tp2)
                         if CHANNEL_ID:
                             send_bale_message(CHANNEL_ID, msg_tp2)
-
+                            
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
         except Exception as e:
-            log_error_to_bale(f"Monitor loop
-
-error: {e}")
+            log_error_to_bale(f"Monitor loop error: {e}")
             time.sleep(5)
 
 def automated_background_scanner():
@@ -527,7 +519,7 @@ def start_bot():
                                 total_trades = len(TRADE_HISTORY)
                                 wins = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) > 0])
                                 losses = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) <= 0])
-                                win_rate = (wins / total_trades  100) if total_trades > 0 else 0.0
+                                win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
                                 total_pnl = sum([t.get('pnl', 0.0) for t in TRADE_HISTORY])
 
                                 stats_txt = (
@@ -536,17 +528,15 @@ def start_bot():
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل معاملات بسته شده: {total_trades}\n"
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
-                                    f"📈 درصد وین‌ریت: {win_rate:.1f}%\n"
-                                    f"💰 سود/زیان خالص:* {total_pnl:+.2f} $\n"
+                                    f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
+                                    f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, stats_txt)
                             elif data_action == 'bot_status':
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
-                                    f"⚙️ وضعیت سیستم ربات:\
-
-n"
+                                    f"⚙️ وضعیت سیستم ربات:\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تعداد خطاهای اخیر ثبت شده: {len(ERROR_LOGS)}\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
@@ -599,5 +589,5 @@ n"
         except Exception as e:
             time.sleep(3)
 
-if name == '__main__':
+if __name__ == '__main__':
     start_bot()
