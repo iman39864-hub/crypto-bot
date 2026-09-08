@@ -23,7 +23,7 @@ app = Flask(__name__)
 ERROR_LOGS = []
 
 def log_error_to_bale(error_msg):
-    global ADMIN_LOGS_ENABLED
+    global ERROR_LOGS
     ERROR_LOGS.append(error_msg)
     if len(ERROR_LOGS) > 20:
         ERROR_LOGS.pop(0)
@@ -117,8 +117,9 @@ def get_signal_keyboard(symbol, p_data=None):
             ],
             [
                 {"text": t3, "callback_data": f"tp3_{symbol}"},
+                {"text":
 
-{"text": "🛑 بستن دستی (SL)", "callback_data": f"close_{symbol}"}
+"🛑 بستن دستی (SL)", "callback_data": f"close_{symbol}"}
             ]
         ]
     }
@@ -209,9 +210,9 @@ def close_position_automatically(p, exit_price, reason="SL_HIT"):
     else:
         pnl_percent = (entry - exit_price) / entry
 
-    pnl_usd =
+    pnl_usd = trade_s
 
-trade_size  pnl_percent
+ize  pnl_percent
     PAPER_BALANCE += pnl_usd
 
     p['status'] = 'CLOSED'
@@ -380,10 +381,9 @@ def tradingview_webhook():
         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
         icon = "🚀" if position_type == 'LONG' else "📉"
-        msg =
+        msg = (
 
-(
-            f"{icon} سیگنال تریدینگ‌ویو ({position_type}) \n"
+f"{icon} سیگنال تریدینگ‌ویو ({position_type}) \n"
             f"──────────────────────\n"
             f"🔹 نماد: {symbol}\n"
             f"💵 قیمت ورود: {price:.4f}\n"
@@ -466,9 +466,9 @@ def automated_price_monitor():
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
         except Exception as e:
-            log_error_to_bale(f"Monit
+            log_error_to_bale(f"Monitor loop
 
-or loop error: {e}")
+error: {e}")
             time.sleep(5)
 
 def automated_background_scanner():
@@ -544,9 +544,9 @@ def start_bot():
                             elif data_action == 'bot_status':
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
-                                    f"⚙️ وضعیت سیست
+                                    f"⚙️ وضعیت سیستم ربات:\
 
-م ربات:\n"
+n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تعداد خطاهای اخیر ثبت شده: {len(ERROR_LOGS)}\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
