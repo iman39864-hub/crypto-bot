@@ -19,7 +19,6 @@ CHANNEL_ID = '@Trade_iman'
 
 app = Flask(__name__)
 
-# لیست برای ذخیره موقت لاگ‌های خطا جهت مشاهده در صورت نیاز
 ERROR_LOGS = []
 
 def log_error_to_bale(error_msg):
