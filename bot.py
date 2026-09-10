@@ -416,16 +416,19 @@ def automated_price_monitor():
                 if not curr:
                     continue
 
+                # بررسی برخورد با حد ضرر (SL)
                 hit_sl = (p['type'] == 'LONG' and curr <= p['sl']) or (p['type'] == 'SHORT' and curr >= p['sl'])
                 if hit_sl:
                     close_position_automatically(p, curr, reason="حد ضرر (SL)")
                     continue
 
+                # بررسی برخورد با حد سود نهایی (TP3) -> بستن کامل معامله با سود
                 hit_tp3 = (p['type'] == 'LONG' and curr >= p['tp3']) or (p['type'] == 'SHORT' and curr <= p['tp3'])
                 if hit_tp3:
                     close_position_automatically(p, curr, reason="هدف نهایی (TP3)")
                     continue
 
+                # بررسی TP1 (ریسک‌فری کردن)
                 if not p.get('hit_tp1', False):
                     hit_tp1_cond = (p['type'] == 'LONG' and curr >= p['tp1']) or (p['type'] == 'SHORT' and curr <= p['tp1'])
                     if hit_tp1_cond:
@@ -434,7 +437,7 @@ def automated_price_monitor():
                         p['risk_free'] = True
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                         
-                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n🛡️ حد ضرر به نقطه ورود منتقل گردید (ریسک‌فری شد) اما معامله همچنان باز است."
+                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n🛡️ حد ضرر به نقطه ورود منتقل گردید (ریسک‌فری شد)."
                         if ADMIN_CHAT_ID:
                             send_bale_message(ADMIN_CHAT_ID, msg_tp1)
                         if CHANNEL_ID:
@@ -443,6 +446,7 @@ def automated_price_monitor():
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
+                # بررسی TP2
                 if not p.get('hit_tp2', False):
                     hit_tp2_cond = (p['type'] == 'LONG' and curr >= p['tp2']) or (p['type'] == 'SHORT' and curr <= p['tp2'])
                     if hit_tp2_cond:
@@ -561,15 +565,19 @@ def start_bot():
                                             p['risk_free'] = True
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و ریسک‌فری شد (معامله باز است).")
+                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و ریسک‌فری شد.")
                                         elif action_type == 'tp2':
                                             p['hit_tp2'] = True
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد (معامله باز است).")
-                                        elif action_type == 'tp3' or action_type == 'close':
+                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد.")
+                                        elif action_type == 'tp3':
+                                            curr_p = fetch_current_price(sym) or p['tp3']
+                                            close_position_automatically(p, curr_p, reason="هدف نهایی (TP3 دستی)")
+                                            break
+                                        elif action_type == 'close':
                                             curr_p = fetch_current_price(sym) or p['entry']
-                                            close_position_automatically(p, curr_p, reason="بستن دستی / اتمام معامله")
+                                            close_position_automatically(p, curr_p, reason="بستن دستی / حد ضرر")
                                             break
 
                         elif 'message' in update:
