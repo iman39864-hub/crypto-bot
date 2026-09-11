@@ -104,9 +104,9 @@ def get_main_menu_keyboard():
     }
 
 def get_signal_keyboard(symbol, p_data=None):
-    t1 = "✅ TP1 (تایید شده)" if (p_data and p_data.get('hit_tp1')) else "🎯 ثبت لمس TP1"
-    t2 = "✅ TP2 (تایید شده)" if (p_data and p_data.get('hit_tp2')) else "🎯 ثبت لمس TP2"
-    t3 = "✅ TP3 (تایید شده)" if (p_data and p_data.get('hit_tp3')) else "🎯 ثبت لمس TP3"
+    t1 = "✅ TP1 (تایید شده)" if (p_data and p_data.get('hit_tp1')) else "🎯 TP1"
+    t2 = "✅ TP2 (تایید شده)" if (p_data and p_data.get('hit_tp2')) else "🎯 TP2"
+    t3 = "✅ TP3 (تایید شده)" if (p_data and p_data.get('hit_tp3')) else "🎯 TP3"
 
     return {
         "inline_keyboard": [
@@ -116,7 +116,7 @@ def get_signal_keyboard(symbol, p_data=None):
             ],
             [
                 {"text": t3, "callback_data": f"tp3_{symbol}"},
-                {"text": "🛑 بستن دستی (SL)", "callback_data": f"close_{symbol}"}
+                {"text": "🛑 ثبت لمس SL (خروج با ضرر)", "callback_data": f"sl_{symbol}"}
             ]
         ]
     }
@@ -195,12 +195,12 @@ def analyze_market_structure(df):
     bearish_bos = (prev_close >= major_support) and (current_close < major_support)
     return bullish_bos, bearish_bos, major_support, major_resistance
 
-def close_position_automatically(p, exit_price, reason="SL_HIT"):
+def close_position_completely(p, exit_price, reason="SL_HIT"):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
 
     entry = p['entry']
     position_type = p['type']
-    trade_size = 100.0
+    trade_size = 100.0  # کل حجم یا مقدار باقی‌مانده
 
     if position_type == 'LONG':
         pnl_percent = (exit_price - entry) / entry
@@ -218,7 +218,7 @@ def close_position_automatically(p, exit_price, reason="SL_HIT"):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     report_text = (
-        f"📢 گزارش خودکار بسته شدن معامله (دمو) \n"
+        f"📢 گزارش بسته شدن معامله (دمو) \n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
         f"💵 قیمت ورود: {entry:.4f}\n"
@@ -416,51 +416,64 @@ def automated_price_monitor():
                 if not curr:
                     continue
 
-                # بررسی برخورد با حد ضرر (SL)
-                hit_sl = (p['type'] == 'LONG' and curr <= p['sl']) or (p['type'] == 'SHORT' and curr >= p['sl'])
+                entry = p['entry']
+                p_type = p['type']
+
+                # ۱. بررسی برخورد با حد ضرر (SL)
+                hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                 if hit_sl:
-                    close_position_automatically(p, curr, reason="حد ضرر (SL)")
+                    close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
                     continue
 
-                # بررسی برخورد با حد سود نهایی (TP3) -> بستن کامل معامله با سود
-                hit_tp3 = (p['type'] == 'LONG' and curr >= p['tp3']) or (p['type'] == 'SHORT' and curr <= p['tp3'])
-                if hit_tp3:
-                    close_position_automatically(p, curr, reason="هدف نهایی (TP3)")
-                    continue
-
-                # بررسی TP1 (ریسک‌فری کردن)
+                # ۲. بررسی برخورد با TP1
                 if not p.get('hit_tp1', False):
-                    hit_tp1_cond = (p['type'] == 'LONG' and curr >= p['tp1']) or (p['type'] == 'SHORT' and curr <= p['tp1'])
+                    hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
                     if hit_tp1_cond:
                         p['hit_tp1'] = True
-                        p['sl'] = p['entry']
+                        p['sl'] = entry  # ریسک‌فری کردن حد ضرر
                         p['risk_free'] = True
-                        save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                         
-                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n🛡️ حد ضرر به نقطه ورود منتقل گردید (ریسک‌فری شد)."
+                        part_size = 33.33
+                        pct = (p['tp1'] - entry) / entry if p_type == 'LONG' else (entry - p['tp1']) / entry
+                        pnl_part = part_size * pct
+                        PAPER_BALANCE += pnl_part
+                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
+                        save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+
+                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
                         if ADMIN_CHAT_ID:
                             send_bale_message(ADMIN_CHAT_ID, msg_tp1)
                         if CHANNEL_ID:
                             send_bale_message(CHANNEL_ID, msg_tp1)
-                            
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
-                # بررسی TP2
-                if not p.get('hit_tp2', False):
-                    hit_tp2_cond = (p['type'] == 'LONG' and curr >= p['tp2']) or (p['type'] == 'SHORT' and curr <= p['tp2'])
+                # ۳. بررسی برخورد با TP2
+                if p.get('hit_tp1', False) and not p.get('hit_tp2', False):
+                    hit_tp2_cond = (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2'])
                     if hit_tp2_cond:
                         p['hit_tp2'] = True
-                        save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                         
-                        msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n📈 معامله همچنان برای رسیدن به TP3 باز است."
+                        part_size = 33.33
+                        pct = (p['tp2'] - entry) / entry if p_type == 'LONG' else (entry - p['tp2']) / entry
+                        pnl_part = part_size * pct
+                        PAPER_BALANCE += pnl_part
+                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
+                        save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+
+                        msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n💰 سود پله دوم ({pnl_part:+.2f} $) واریز شد."
                         if ADMIN_CHAT_ID:
                             send_bale_message(ADMIN_CHAT_ID, msg_tp2)
                         if CHANNEL_ID:
                             send_bale_message(CHANNEL_ID, msg_tp2)
-                            
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+
+                # ۴. بررسی برخورد با TP3
+                hit_tp3 = (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3'])
+                if hit_tp3:
+                    close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
+                    continue
 
         except Exception as e:
             log_error_to_bale(f"Monitor loop error: {e}")
@@ -552,7 +565,7 @@ def start_bot():
                                 save_database([], [], ADMIN_CHAT_ID, PAPER_BALANCE)
                                 send_bale_message(chat_id, "🔄 حساب دمو ریست شد و موجودی به ۱۰۰۰ دلار برگشت.")
 
-                            elif data_action.startswith('tp1_') or data_action.startswith('tp2_') or data_action.startswith('tp3_') or data_action.startswith('close_'):
+                            elif data_action.startswith('tp1_') or data_action.startswith('tp2_') or data_action.startswith('tp3_') or data_action.startswith('sl_'):
                                 parts = data_action.split('_')
                                 action_type = parts[0]
                                 sym = parts[1]
@@ -573,11 +586,10 @@ def start_bot():
                                             send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد.")
                                         elif action_type == 'tp3':
                                             curr_p = fetch_current_price(sym) or p['tp3']
-                                            close_position_automatically(p, curr_p, reason="هدف نهایی (TP3 دستی)")
+                                            close_position_completely(p, curr_p, reason="هدف نهایی (TP3 دستی)")
                                             break
-                                        elif action_type == 'close':
-                                            curr_p = fetch_current_price(sym) or p['entry']
-                                            close_position_automatically(p, curr_p, reason="بستن دستی / حد ضرر")
+                                        elif action_type == 'sl':
+                                            close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
                                             break
 
                         elif 'message' in update:
