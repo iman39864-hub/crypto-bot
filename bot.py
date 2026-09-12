@@ -200,7 +200,7 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
 
     entry = p['entry']
     position_type = p['type']
-    trade_size = 100.0  # کل حجم یا مقدار باقی‌مانده
+    trade_size = 100.0  
 
     if position_type == 'LONG':
         pnl_percent = (exit_price - entry) / entry
@@ -412,68 +412,71 @@ def automated_price_monitor():
                 continue
 
             for p in actives:
-                curr = fetch_current_price(p['symbol'])
-                if not curr:
-                    continue
+                try:
+                    curr = fetch_current_price(p['symbol'])
+                    if not curr:
+                        continue
 
-                entry = p['entry']
-                p_type = p['type']
+                    entry = p['entry']
+                    p_type = p['type']
 
-                # ۱. بررسی برخورد با حد ضرر (SL)
-                hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
-                if hit_sl:
-                    close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
-                    continue
+                    # ۱. بررسی برخورد با حد ضرر (SL)
+                    hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
+                    if hit_sl:
+                        close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
+                        continue
 
-                # ۲. بررسی برخورد با TP1
-                if not p.get('hit_tp1', False):
-                    hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
-                    if hit_tp1_cond:
-                        p['hit_tp1'] = True
-                        p['sl'] = entry  # ریسک‌فری کردن حد ضرر
-                        p['risk_free'] = True
-                        
-                        part_size = 33.33
-                        pct = (p['tp1'] - entry) / entry if p_type == 'LONG' else (entry - p['tp1']) / entry
-                        pnl_part = part_size * pct
-                        PAPER_BALANCE += pnl_part
-                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
-                        save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                    # ۲. بررسی برخورد با TP1
+                    if not p.get('hit_tp1', False):
+                        hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
+                        if hit_tp1_cond:
+                            p['hit_tp1'] = True
+                            p['sl'] = entry  
+                            p['risk_free'] = True
+                            
+                            part_size = 33.33
+                            pct = (p['tp1'] - entry) / entry if p_type == 'LONG' else (entry - p['tp1']) / entry
+                            pnl_part = part_size * pct
+                            PAPER_BALANCE += pnl_part
+                            TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
+                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
-                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
-                        if ADMIN_CHAT_ID:
-                            send_bale_message(ADMIN_CHAT_ID, msg_tp1)
-                        if CHANNEL_ID:
-                            send_bale_message(CHANNEL_ID, msg_tp1)
-                        if p.get('msg_id') and ADMIN_CHAT_ID:
-                            edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+                            msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
+                            if ADMIN_CHAT_ID:
+                                send_bale_message(ADMIN_CHAT_ID, msg_tp1)
+                            if CHANNEL_ID:
+                                send_bale_message(CHANNEL_ID, msg_tp1)
+                            if p.get('msg_id') and ADMIN_CHAT_ID:
+                                edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
-                # ۳. بررسی برخورد با TP2
-                if p.get('hit_tp1', False) and not p.get('hit_tp2', False):
-                    hit_tp2_cond = (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2'])
-                    if hit_tp2_cond:
-                        p['hit_tp2'] = True
-                        
-                        part_size = 33.33
-                        pct = (p['tp2'] - entry) / entry if p_type == 'LONG' else (entry - p['tp2']) / entry
-                        pnl_part = part_size * pct
-                        PAPER_BALANCE += pnl_part
-                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
-                        save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                    # ۳. بررسی برخورد با TP2
+                    if p.get('hit_tp1', False) and not p.get('hit_tp2', False):
+                        hit_tp2_cond = (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2'])
+                        if hit_tp2_cond:
+                            p['hit_tp2'] = True
+                            
+                            part_size = 33.33
+                            pct = (p['tp2'] - entry) / entry if p_type == 'LONG' else (entry - p['tp2']) / entry
+                            pnl_part = part_size * pct
+                            PAPER_BALANCE += pnl_part
+                            TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
+                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
-                        msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n💰 سود پله دوم ({pnl_part:+.2f} $) واریز شد."
-                        if ADMIN_CHAT_ID:
-                            send_bale_message(ADMIN_CHAT_ID, msg_tp2)
-                        if CHANNEL_ID:
-                            send_bale_message(CHANNEL_ID, msg_tp2)
-                        if p.get('msg_id') and ADMIN_CHAT_ID:
-                            edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+                            msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n💰 سود پله دوم ({pnl_part:+.2f} $) واریز شد."
+                            if ADMIN_CHAT_ID:
+                                send_bale_message(ADMIN_CHAT_ID, msg_tp2)
+                            if CHANNEL_ID:
+                                send_bale_message(CHANNEL_ID, msg_tp2)
+                            if p.get('msg_id') and ADMIN_CHAT_ID:
+                                edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
-                # ۴. بررسی برخورد با TP3
-                hit_tp3 = (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3'])
-                if hit_tp3:
-                    close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
-                    continue
+                    # ۴. بررسی برخورد با TP3
+                    hit_tp3 = (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3'])
+                    if hit_tp3:
+                        close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
+                        continue
+                except Exception as inner_ex:
+                    pass
 
         except Exception as e:
             log_error_to_bale(f"Monitor loop error: {e}")
