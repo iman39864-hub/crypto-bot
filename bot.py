@@ -215,6 +215,11 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     p['pnl'] = pnl_usd
 
     TRADE_HISTORY.append({'symbol': p['symbol'], 'type': position_type, 'pnl': pnl_usd})
+    
+    # حذف از لیست فعال‌ها و انتقال کامل به تاریخچه
+    if p in ACTIVE_POSITIONS:
+        ACTIVE_POSITIONS.remove(p)
+
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     report_text = (
@@ -238,7 +243,7 @@ def scan_and_notify(chat_id, notify_if_empty=False):
     signals_found = 0
     for symbol in symbols:
         try:
-            if any(p['symbol'] == symbol and p['status'] == 'ACTIVE' for p in ACTIVE_POSITIONS): continue
+            if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS): continue
             df_15m = fetch_toobit_candles(symbol, '15m', 300)
             df_1h = fetch_toobit_candles(symbol, '1h', 300)
             if df_15m is None or df_1h is None: continue
@@ -362,7 +367,7 @@ def tradingview_webhook():
         tp2 = float(data.get('tp2', price * 1.02 if position_type == 'LONG' else price * 0.98))
         tp3 = float(data.get('tp3', price * 1.03 if position_type == 'LONG' else price * 0.97))
 
-        if any(p['symbol'] == symbol and p['status'] == 'ACTIVE' for p in ACTIVE_POSITIONS):
+        if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
             return jsonify({"status": "error", "message": "Active position already exists for this symbol"}), 400
 
         pos = {
@@ -406,12 +411,12 @@ def automated_price_monitor():
     while True:
         try:
             time.sleep(5)
-            actives = [x for x in ACTIVE_POSITIONS if x['status'] == 'ACTIVE']
-            if not actives:
+            if not ACTIVE_POSITIONS:
                 time.sleep(5)
                 continue
 
-            for p in actives:
+            # استفاده از لیست کپی شده برای جلوگیری از خطای تغییر سایز لیست حین حلقه
+            for p in list(ACTIVE_POSITIONS):
                 try:
                     curr = fetch_current_price(p['symbol'])
                     if not curr:
@@ -420,7 +425,7 @@ def automated_price_monitor():
                     entry = p['entry']
                     p_type = p['type']
 
-                    # ۱. بررسی برخورد با حد ضرر (SL)
+                    # ۱. بررسی برخورد با حد ضرر (SL) اولویت بالا
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
@@ -448,6 +453,7 @@ def automated_price_monitor():
                                 send_bale_message(CHANNEL_ID, msg_tp1)
                             if p.get('msg_id') and ADMIN_CHAT_ID:
                                 edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+                            continue
 
                     # ۳. بررسی برخورد با TP2
                     if p.get('hit_tp1', False) and not p.get('hit_tp2', False):
@@ -469,12 +475,14 @@ def automated_price_monitor():
                                 send_bale_message(CHANNEL_ID, msg_tp2)
                             if p.get('msg_id') and ADMIN_CHAT_ID:
                                 edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+                            continue
 
                     # ۴. بررسی برخورد با TP3
                     hit_tp3 = (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3'])
                     if hit_tp3:
                         close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
                         continue
+
                 except Exception as inner_ex:
                     pass
 
@@ -526,12 +534,11 @@ def start_bot():
                                 send_bale_message(chat_id, "🔍 اسکن بازار شروع شد...")
                                 threading.Thread(target=scan_and_notify, args=(chat_id, True)).start()
                             elif data_action == 'active_positions':
-                                actives = [p for p in ACTIVE_POSITIONS if p['status'] == 'ACTIVE']
-                                if not actives:
+                                if not ACTIVE_POSITIONS:
                                     send_bale_message(chat_id, "📈 در حال حاضر هیچ پوزیشن فعالی وجود ندارد.")
                                 else:
                                     txt = "📈 پوزیشن‌های فعال دمو:\n"
-                                    for p in actives:
+                                    for p in ACTIVE_POSITIONS:
                                         txt += f"- {p['symbol']} ({p['type']}) | ورود: {p['entry']} | حد ضرر: {p['sl']}\n"
                                     send_bale_message(chat_id, txt)
                             elif data_action == 'stats':
@@ -574,7 +581,7 @@ def start_bot():
                                 sym = parts[1]
 
                                 for p in ACTIVE_POSITIONS:
-                                    if p['symbol'] == sym and p['status'] == 'ACTIVE':
+                                    if p['symbol'] == sym:
                                         if action_type == 'tp1':
                                             p['hit_tp1'] = True
                                             p['sl'] = p['entry']
