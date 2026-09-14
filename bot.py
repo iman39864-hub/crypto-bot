@@ -18,11 +18,11 @@ ADMIN_CHAT_ID = None
 CHANNEL_ID = '@Trade_iman'
 
 app = Flask(__name__)
-
 ERROR_LOGS = []
 
 def log_error_to_bale(error_msg):
     global ERROR_LOGS
+    print(f"[ERROR] {error_msg}")
     ERROR_LOGS.append(error_msg)
     if len(ERROR_LOGS) > 20:
         ERROR_LOGS.pop(0)
@@ -40,7 +40,7 @@ def load_database():
                 data = json.load(f)
             return data.get('active', []), data.get('history', []), data.get('admin_id', None), data.get('balance', 1000.0)
         except Exception as e:
-            log_error_to_bale(f"خطا در خواندن دیتابیس: {e}")
+            print(f"DB Load Error: {e}")
     return [], [], None, 1000.0
 
 def save_database(active, history, admin_id, balance):
@@ -49,7 +49,7 @@ def save_database(active, history, admin_id, balance):
         with open(DB_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
     except Exception as e:
-        log_error_to_bale(f"خطا در ذخیره دیتابیس: {e}")
+        print(f"DB Save Error: {e}")
 
 ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE = load_database()
 
@@ -65,7 +65,7 @@ def send_bale_message(chat_id, text, reply_markup=None):
         if response.status_code == 200:
             return response.json()
     except Exception as e:
-        pass 
+        print(f"Send Message Error: {e}")
     return None
 
 def edit_message_reply_markup(chat_id, message_id, reply_markup):
@@ -89,17 +89,9 @@ def answer_callback_query(callback_query_id, text="انجام شد"):
 def get_main_menu_keyboard():
     return {
         "inline_keyboard": [
-            [
-                {"text": "📊 اسکن هوشمند بازار", "callback_data": "scan_market"}
-            ],
-            [
-                {"text": "📈 پوزیشن‌های فعال", "callback_data": "active_positions"},
-                {"text": "📊 آمار و وین‌ریت", "callback_data": "stats"}
-            ],
-            [
-                {"text": "⚙️ وضعیت و لاگ خطا", "callback_data": "bot_status"},
-                {"text": "🔄 ریست کامل حساب", "callback_data": "reset_stats"}
-            ]
+            [{"text": "📊 اسکن هوشمند بازار", "callback_data": "scan_market"}],
+            [{"text": "📈 پوزیشن‌های فعال", "callback_data": "active_positions"}, {"text": "📊 آمار و وین‌ریت", "callback_data": "stats"}],
+            [{"text": "⚙️ وضعیت و لاگ خطا", "callback_data": "bot_status"}, {"text": "🔄 ریست کامل حساب", "callback_data": "reset_stats"}]
         ]
     }
 
@@ -107,17 +99,10 @@ def get_signal_keyboard(symbol, p_data=None):
     t1 = "✅ TP1 (تایید شده)" if (p_data and p_data.get('hit_tp1')) else "🎯 TP1"
     t2 = "✅ TP2 (تایید شده)" if (p_data and p_data.get('hit_tp2')) else "🎯 TP2"
     t3 = "✅ TP3 (تایید شده)" if (p_data and p_data.get('hit_tp3')) else "🎯 TP3"
-
     return {
         "inline_keyboard": [
-            [
-                {"text": t1, "callback_data": f"tp1_{symbol}"},
-                {"text": t2, "callback_data": f"tp2_{symbol}"}
-            ],
-            [
-                {"text": t3, "callback_data": f"tp3_{symbol}"},
-                {"text": "🛑 ثبت لمس SL (خروج با ضرر)", "callback_data": f"sl_{symbol}"}
-            ]
+            [{"text": t1, "callback_data": f"tp1_{symbol}"}, {"text": t2, "callback_data": f"tp2_{symbol}"}],
+            [{"text": t3, "callback_data": f"tp3_{symbol}"}, {"text": "🛑 ثبت لمس SL (خروج با ضرر)", "callback_data": f"sl_{symbol}"}]
         ]
     }
 
@@ -125,7 +110,7 @@ def fetch_toobit_candles(symbol, interval='15m', limit=300):
     url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
     session = requests.Session()
     session.trust_env = False
-    for attempt in range(2):
+    for _ in range(2):
         try:
             response = session.get(url, timeout=15, verify=False)
             data = response.json()
@@ -133,7 +118,7 @@ def fetch_toobit_candles(symbol, interval='15m', limit=300):
             df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'qav', 'not', 'tbav', 'tbqav'])
             df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
             return df
-        except Exception as e:
+        except Exception:
             time.sleep(1)
     return None
 
@@ -151,34 +136,28 @@ def fetch_current_price(symbol):
             elif 'data' in data and isinstance(data['data'], dict) and 'price' in data['data']: return float(data['data']['price'])
         return None
     except Exception as e:
+        print(f"Price Fetch Error for {symbol}: {e}")
         return None
 
 def calculate_indicators_with_adx(df, period=14):
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['ema200'] = df['close'].ewm(span=200, adjust=False).mean()
-
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0.0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0.0)).rolling(window=period).mean()
-
     rs = gain / (loss + 1e-10)
     df['rsi'] = 100 - (100 / (1 + rs))
-
     df['high_diff'] = df['high'].diff()
     df['low_diff'] = -df['low'].diff()
     df['plus_dm'] = np.where((df['high_diff'] > df['low_diff']) & (df['high_diff'] > 0), df['high_diff'], 0.0)
     df['minus_dm'] = np.where((df['low_diff'] > df['high_diff']) & (df['low_diff'] > 0), df['low_diff'], 0.0)
-
     df['tr'] = pd.concat([(df['high'] - df['low']), (df['high'] - df['close'].shift()).abs(), (df['low'] - df['close'].shift()).abs()], axis=1).max(axis=1)
     df['atr'] = df['tr'].rolling(window=period).mean()
-
     df['smooth_plus_dm'] = pd.Series(df['plus_dm']).rolling(window=period).mean()
     df['smooth_minus_dm'] = pd.Series(df['minus_dm']).rolling(window=period).mean()
     df['smooth_tr'] = df['tr'].rolling(window=period).mean()
-
     df['plus_di'] = (df['smooth_plus_dm'] / (df['smooth_tr'] + 1e-10)) * 100
     df['minus_di'] = (df['smooth_minus_dm'] / (df['smooth_tr'] + 1e-10)) * 100
-
     dx_den = (df['plus_di'] + df['minus_di'])
     df['dx'] = (abs(df['plus_di'] - df['minus_di']) / (dx_den + 1e-10)) * 100
     df['adx'] = df['dx'].rolling(window=period).mean()
@@ -216,7 +195,6 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
 
     TRADE_HISTORY.append({'symbol': p['symbol'], 'type': position_type, 'pnl': pnl_usd})
     
-    # حذف از لیست فعال‌ها و انتقال کامل به تاریخچه
     if p in ACTIVE_POSITIONS:
         ACTIVE_POSITIONS.remove(p)
 
@@ -232,6 +210,7 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         f"💳 **موجودی جدید حساب دمو:** {PAPER_BALANCE:.2f} $\n"
         f"──────────────────────"
     )
+    print(f"Closed trade: {p['symbol']} with PnL: {pnl_usd}")
     if ADMIN_CHAT_ID:
         send_bale_message(ADMIN_CHAT_ID, report_text)
     if CHANNEL_ID:
@@ -345,7 +324,7 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                     if CHANNEL_ID:
                         send_bale_message(CHANNEL_ID, msg)
         except Exception as ex:
-            log_error_to_bale(f"Scan error on {symbol}: {ex}")
+            print(f"Scan error on {symbol}: {ex}")
 
     if notify_if_empty and signals_found == 0 and chat_id:
         send_bale_message(chat_id, "🔍 اسکن انجام شد. در حال حاضر شرایط بازار با این فیلترها مطابقت نداشت.")
@@ -408,14 +387,13 @@ def tradingview_webhook():
 
 def automated_price_monitor():
     global ADMIN_CHAT_ID, ACTIVE_POSITIONS, TRADE_HISTORY, PAPER_BALANCE
+    print("Price monitor background thread started successfully.")
     while True:
         try:
             time.sleep(5)
             if not ACTIVE_POSITIONS:
-                time.sleep(5)
                 continue
 
-            # استفاده از لیست کپی شده برای جلوگیری از خطای تغییر سایز لیست حین حلقه
             for p in list(ACTIVE_POSITIONS):
                 try:
                     curr = fetch_current_price(p['symbol'])
@@ -425,16 +403,15 @@ def automated_price_monitor():
                     entry = p['entry']
                     p_type = p['type']
 
-                    # ۱. بررسی برخورد با حد ضرر (SL) اولویت بالا
+                    # ۱. بررسی حد ضرر (SL)
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
                         continue
 
-                    # ۲. بررسی برخورد با TP1
+                    # ۲. بررسی TP1
                     if not p.get('hit_tp1', False):
-                        hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
-                        if hit_tp1_cond:
+                        if (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1']):
                             p['hit_tp1'] = True
                             p['sl'] = entry  
                             p['risk_free'] = True
@@ -447,18 +424,15 @@ def automated_price_monitor():
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
                             msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
-                            if ADMIN_CHAT_ID:
-                                send_bale_message(ADMIN_CHAT_ID, msg_tp1)
-                            if CHANNEL_ID:
-                                send_bale_message(CHANNEL_ID, msg_tp1)
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1)
+                            if CHANNEL_ID: send_bale_message(CHANNEL_ID, msg_tp1)
                             if p.get('msg_id') and ADMIN_CHAT_ID:
                                 edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
                             continue
 
-                    # ۳. بررسی برخورد با TP2
+                    # ۳. بررسی TP2
                     if p.get('hit_tp1', False) and not p.get('hit_tp2', False):
-                        hit_tp2_cond = (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2'])
-                        if hit_tp2_cond:
+                        if (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2']):
                             p['hit_tp2'] = True
                             
                             part_size = 33.33
@@ -469,50 +443,38 @@ def automated_price_monitor():
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
                             msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n💰 سود پله دوم ({pnl_part:+.2f} $) واریز شد."
-                            if ADMIN_CHAT_ID:
-                                send_bale_message(ADMIN_CHAT_ID, msg_tp2)
-                            if CHANNEL_ID:
-                                send_bale_message(CHANNEL_ID, msg_tp2)
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp2)
+                            if CHANNEL_ID: send_bale_message(CHANNEL_ID, msg_tp2)
                             if p.get('msg_id') and ADMIN_CHAT_ID:
                                 edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
                             continue
 
-                    # ۴. بررسی برخورد با TP3
-                    hit_tp3 = (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3'])
-                    if hit_tp3:
+                    # ۴. بررسی TP3
+                    if (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3']):
                         close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
                         continue
 
                 except Exception as inner_ex:
-                    pass
+                    print(f"Inner monitor loop error for {p.get('symbol')}: {inner_ex}")
 
         except Exception as e:
-            log_error_to_bale(f"Monitor loop error: {e}")
+            print(f"Monitor loop major error: {e}")
             time.sleep(5)
 
 def automated_background_scanner():
-    global ADMIN_CHAT_ID
     while True:
         try:
             time.sleep(1200)
             if ADMIN_CHAT_ID:
                 scan_and_notify(ADMIN_CHAT_ID, notify_if_empty=False)
         except Exception as e:
-            log_error_to_bale(f"Background scanner error: {e}")
+            print(f"Background scanner error: {e}")
             time.sleep(60)
 
-def run_flask_server():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-def start_bot():
+def start_telegram_bot():
     global ADMIN_CHAT_ID, ACTIVE_POSITIONS, TRADE_HISTORY, PAPER_BALANCE
     offset = 0
-
-    threading.Thread(target=run_flask_server, daemon=True).start()
-    threading.Thread(target=automated_background_scanner, daemon=True).start()
-    threading.Thread(target=automated_price_monitor, daemon=True).start()
-
+    print("Telegram/Bale bot polling loop started.")
     while True:
         try:
             url = f"{BASE_URL}/getUpdates?offset={offset}&timeout=20"
@@ -593,13 +555,13 @@ def start_bot():
                                             p['hit_tp2'] = True
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد.")
+                                            send_bale_message(chat_id, fya := f"✅ TP2 برای {sym} ثبت شد.")
                                         elif action_type == 'tp3':
                                             curr_p = fetch_current_price(sym) or p['tp3']
                                             close_position_completely(p, curr_p, reason="هدف نهایی (TP3 دستی)")
                                             break
                                         elif action_type == 'sl':
-                                            close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
+                                            close_position_converting := close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
                                             break
 
                         elif 'message' in update:
@@ -616,7 +578,14 @@ def start_bot():
                                     menu = get_main_menu_keyboard()
                                     send_bale_message(chat_id, "🤖 پنل حساب دموی خودکار ربات\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=menu)
         except Exception as e:
+            print(f"Telegram polling error: {e}")
             time.sleep(3)
 
 if __name__ == '__main__':
-    start_bot()
+    # راه‌اندازی تردها به صورت کاملاً مستقل و دیمون
+    threading.Thread(target=automated_price_monitor, daemon=True).start()
+    threading.Thread(target=automated_background_scanner, daemon=True).start()
+    threading.Thread(target=start_telegram_bot, daemon=True).start()
+
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
