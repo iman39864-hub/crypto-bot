@@ -555,13 +555,13 @@ def start_telegram_bot():
                                             p['hit_tp2'] = True
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, fya := f"✅ TP2 برای {sym} ثبت شد.")
+                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد.")
                                         elif action_type == 'tp3':
                                             curr_p = fetch_current_price(sym) or p['tp3']
                                             close_position_completely(p, curr_p, reason="هدف نهایی (TP3 دستی)")
                                             break
                                         elif action_type == 'sl':
-                                            close_position_converting := close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
+                                            close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
                                             break
 
                         elif 'message' in update:
@@ -582,7 +582,6 @@ def start_telegram_bot():
             time.sleep(3)
 
 if __name__ == '__main__':
-    # راه‌اندازی تردها به صورت کاملاً مستقل و دیمون
     threading.Thread(target=automated_price_monitor, daemon=True).start()
     threading.Thread(target=automated_background_scanner, daemon=True).start()
     threading.Thread(target=start_telegram_bot, daemon=True).start()
