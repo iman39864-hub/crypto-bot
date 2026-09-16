@@ -383,7 +383,7 @@ def automated_price_monitor():
                             p['risk_free'] = True
                             
                             part_size = 33.33
-                            pct = (p['tp1'] - entry) / entry if p_type == 'LONG' else (entry - p['tp1']) / entry
+                            pct = ((p['tp1'] - entry) / entry) if p_type == 'LONG' else ((entry - p['tp1']) / entry)
                             pnl_part = part_size * pct
                             PAPER_BALANCE += pnl_part
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
@@ -401,7 +401,7 @@ def automated_price_monitor():
                             p['hit_tp2'] = True
                             
                             part_size = 33.33
-                            pct = (p['tp2'] - entry) / entry if p_type == 'LONG' else (entry - p['tp2']) / entry
+                            pct = ((p['tp2'] - entry) / entry) if p_type == 'LONG' else ((entry - p['tp2']) / entry)
                             pnl_part = part_size * pct
                             PAPER_BALANCE += pnl_part
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
@@ -415,6 +415,7 @@ def automated_price_monitor():
                             continue
 
                     if (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3']):
+                        p['hit_tp3'] = True
                         close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
                         continue
 
