@@ -1,3 +1,4 @@
+
 import time
 import threading
 import urllib3
@@ -113,7 +114,7 @@ return {
 ]
 }
 
-def fetch_toobit_candles(symbol, interval='15m', limit=300):
+def fetch_toobit_candles(symbol, interval='15m', limit=200):
 
 url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
 session = requests.Session()
@@ -230,7 +231,6 @@ current_close = float(df_15m['close'].iloc[-2])
 
 if pd.isna(atr) or atr <= 0 or pd.isna(rsi): continue
 
-# شرط‌های ساده‌تر و کاربردی‌تر برای تولید سیگنال اتوماتیک
 is_long = (current_close > ema50) and (rsi < 65) and (rsi > 40)
 is_short = (current_close < ema50) and (rsi > 35) and (rsi < 60)
 
@@ -243,7 +243,6 @@ tp1 = realtime_price + (1.5 * atr)
 tp2 = realtime_price + (3.0 * atr)
 tp3 = realtime_price + (4.5 * atr)
 signals_found += 1
-
 
 pos = {
 'symbol': symbol, 'type': 'LONG', 'entry': realtime_price, 'sl': sl,
@@ -260,8 +259,8 @@ f"──────────────────────\n"
 f"🔹 نماد: {symbol}\n"
 f"💵 قیمت ورود: {realtime_price:.4f}\n"
 f"🎯 TP1: {tp1:.4f}\n"
-
 f"🎯 TP2: {tp2:.4f}\n"
+
 f"🎯 TP3: {tp3:.4f}\n"
 f"🛑 حد ضرر اولیه: {sl:.4f}\n"
 f"──────────────────────"
@@ -277,6 +276,7 @@ if CHANNEL_ID:
 send_bale_message(CHANNEL_ID, msg)
 
 elif is_short:
+
 sl = realtime_price + (1.5 * atr)
 tp1 = realtime_price - (1.5 * atr)
 tp2 = realtime_price - (3.0 * atr)
@@ -293,6 +293,7 @@ ACTIVE_POSITIONS.append(pos)
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
 msg = (
+
 f"📉 سیگنال خودکار بازار (SHORT) \n"
 f"──────────────────────\n"
 f"🔹 نماد: {symbol}\n"
@@ -308,9 +309,9 @@ res = send_bale_message(ADMIN_CHAT_ID, msg, reply_markup=get_signal_keyboard(sym
 try:
 if res and 'result' in res:
 pos['msg_id'] = res['result']['message_id']
-save_database(ACTIVE_POSITIONS, 
+save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, 
 
-TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+PAPER_BALANCE)
 except: pass
 if CHANNEL_ID:
 send_bale_message(CHANNEL_ID, msg)
@@ -326,8 +327,9 @@ global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
 try:
 data = request.json
 if not data:
+return jsonify({"status": "error", "message": "No 
 
-return jsonify({"status": "error", "message": "No JSON data received"}), 400
+JSON data received"}), 400
 
 symbol = data.get('symbol', 'BTCUSDT').upper()
 position_type = data.get('type', 'LONG').upper()
@@ -339,9 +341,9 @@ tp2 = float(data.get('tp2', price * 1.02 if position_type == 'LONG' else price *
 tp3 = float(data.get('tp3', price * 1.03 if position_type == 'LONG' else price * 0.97))
 
 if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
-return jsonify({"status": "error", "message": 
+return jsonify({"status": "error", "message": "Active position already exists for this symbol"}), 
 
-"Active position already exists for this symbol"}), 400
+400
 
 pos = {
 'symbol': symbol, 'type': position_type, 'entry': price, 'sl': sl,
@@ -356,8 +358,8 @@ icon = "🚀" if position_type == 'LONG' else "📉"
 msg = (
 f"{icon} سیگنال تریدینگ‌ویو ({position_type}) \n"
 f"──────────────────────\n"
-
 f"🔹 نماد: {symbol}\n"
+
 f"💵 قیمت ورود: {price:.4f}\n"
 f"🎯 TP1: {tp1:.4f}\n"
 f"🎯 TP2: {tp2:.4f}\n"
@@ -372,8 +374,8 @@ if res and 'result' in res:
 pos['msg_id'] = res['result']['message_id']
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 except: pass
-
 if CHANNEL_ID:
+
 send_bale_message(CHANNEL_ID, msg)
 
 return jsonify({"status": "success", "message": "Signal processed successfully"}), 200
@@ -390,7 +392,6 @@ time.sleep(5)
 if not ACTIVE_POSITIONS:
 continue
 
-
 for p in list(ACTIVE_POSITIONS):
 try:
 curr = fetch_current_price(p['symbol'])
@@ -400,17 +401,15 @@ continue
 entry = p['entry']
 p_type = p['type']
 
-# ۱. بررسی حد ضرر (SL)
 hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
 if hit_sl:
 close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
 continue
 
-# ۲. بررسی TP1
 if not p.get('hit_tp1', False):
-
 if (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1']):
 p['hit_tp1'] = True
+
 p['sl'] = entry
  p['risk_free'] = True
 
@@ -422,14 +421,14 @@ TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
 msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part:+.2f} $`) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
-
 if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1)
-if CHANNEL_ID: send_bale_message(CHANNEL_ID, msg_tp1)
+if CHANNEL_ID: 
+
+send_bale_message(CHANNEL_ID, msg_tp1)
 if p.get('msg_id') and ADMIN_CHAT_ID:
 edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 continue
 
-# ۳. بررسی TP2
 if p.get('hit_tp1', False) and not p.get('hit_tp2', False):
 if (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2']):
 p['hit_tp2'] = True
@@ -437,10 +436,11 @@ p['hit_tp2'] = True
 part_size = 33.33
 pct = (p['tp2'] - entry) / entry if p_type == 'LONG' else (entry - p['tp2']) / entry
 pnl_part = part_size * pct
-
 PAPER_BALANCE += pnl_part
 TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
-save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+save_database(ACTIVE_POSITIONS, 
+
+TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
 msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n💰 سود پله دوم ({pnl_part:+.2f} `$) واریز شد."
 if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp2)
@@ -449,11 +449,10 @@ if p.get('msg_id') and ADMIN_CHAT_ID:
 edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 continue
 
-# ۴. بررسی TP3
-
 if (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3']):
 close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
 continue
+
 
 except Exception as inner_ex:
 print(f"Inner monitor loop error for {p.get('symbol')}: {inner_ex}")
@@ -467,9 +466,7 @@ while True:
 try:
 time.sleep(1200)
 if ADMIN_CHAT_ID:
-scan_and_notify(ADMIN_CHAT_ID, 
-
-notify_if_empty=False)
+scan_and_notify(ADMIN_CHAT_ID, notify_if_empty=False)
 except Exception as e:
 print(f"Background scanner error: {e}")
 time.sleep(60)
@@ -486,12 +483,12 @@ if response.status_code == 200:
 data = response.json()
 if data.get('ok'):
 for update in data['result']:
-
 offset = update['update_id'] + 1
 
 if 'callback_query' in update:
 cq = update['callback_query']
 chat_id = cq['message']['chat']['id']
+
 message_id = cq['message']['message_id']
 data_action = cq['data']
 answer_callback_query(cq['id'], "انجام شد ✓")
@@ -504,11 +501,11 @@ if not ACTIVE_POSITIONS:
 send_bale_message(chat_id, "📈 در حال حاضر هیچ پوزیشن فعالی وجود ندارد.")
 else:
 txt = "📈 پوزیشن‌های فعال دمو:\n"
-
 for p in ACTIVE_POSITIONS:
 txt += f"- {p['symbol']} ({p['type']}) | ورود: {p['entry']} | حد ضرر: {p['sl']}\n"
 send_bale_message(chat_id, txt)
 elif data_action == 'stats':
+
 total_trades = len(TRADE_HISTORY)
 wins = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) > 0])
 losses = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) <= 0])
@@ -519,8 +516,9 @@ stats_txt = (
 f"📊 گزارش حساب دمو و وین‌ریت:\n"
 f"──────────────────────\n"
 f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} 
-
  
+
+
 \n"
 f"──────────────────────"
 )
@@ -531,7 +529,6 @@ status_msg = (
 f"⚙️ وضعیت سیستم ربات:\n"
 f"• مانیتورینگ قیمت: فعال\n"
 f"• تعداد خطاهای اخیر ثبت شده: {len(ERROR_LOGS)}\n\n"
-
 f"آخرین خطاها:\n{logs_text}"
 )
 send_bale_message(chat_id, status_msg)
@@ -539,13 +536,14 @@ elif data_action == 'reset_stats':
 ACTIVE_POSITIONS = []
 TRADE_HISTORY = []
 PAPER_BALANCE = 1000.0
+
 save_database([], [], ADMIN_CHAT_ID, PAPER_BALANCE)
 send_bale_message(chat_id, "🔄 حساب دمو ریست شد و موجودی به ۱۰۰۰ دلار برگشت.")
 
 elif data_action.startswith('tp1_') or data_action.startswith('tp2_') or data_action.startswith('tp3_') or data_action.startswith('sl_'):
 parts = data_action.split('_')
 action_type = parts[0]
-. sym = parts[1]
+sym = parts[1]
 
 for p in ACTIVE_POSITIONS:
 if p['symbol'] == sym:
@@ -553,19 +551,21 @@ if action_type == 'tp1':
 p['hit_tp1'] = True
 p['sl'] = p['entry']
 p['risk_free'] = True
-save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+save_database(ACTIVE_POSITIONS, 
+
+TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
 send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و ریسک‌فری شد.")
 elif action_type == 'tp2':
 p['hit_tp2'] = True
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-
 send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد.")
 elif action_type == 'tp3':
 curr_p = fetch_current_price(sym) or p['tp3']
 close_position_completely(p, curr_p, reason="هدف نهایی (TP3 دستی)")
 break
+
 elif action_type == 'sl':
 close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
 break
@@ -578,12 +578,13 @@ text = msg['text'].strip()
 
 if ADMIN_CHAT_ID is None:
 ADMIN_CHAT_ID = chat_id
-
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
 if text == '/start':
 menu = get_main_menu_keyboard()
-send_bale_message(chat_id, "🤖 پنل حساب دموی خودکار ربات\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=menu)
+send_bale_message(chat_id, "🤖 پنل حساب دموی 
+
+خودکار ربات\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=menu)
 except Exception as e:
 print(f"Telegram polling error: {e}")
 time.sleep(3)
@@ -593,6 +594,6 @@ threading.Thread(target=automated_price_monitor, daemon=True).start()
 threading.Thread(target=automated_background_scanner, daemon=True).start()
 threading.Thread(target=start_telegram_bot, daemon=True).start()
 
-
 port = int(os.environ.get("PORT", 10000))
 app.run(host='0.0.0.0', port=port, debug=False)
+
