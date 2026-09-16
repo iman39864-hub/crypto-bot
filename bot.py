@@ -15,6 +15,7 @@ BASE_URL = f'https://tapi.bale.ai/bot{TOKEN}'
 DB_FILE = 'positions_db.json'
 
 ADMIN_CHAT_ID = None
+
 CHANNEL_ID = '@Trade_iman'
 
 app = Flask(name)
@@ -27,13 +28,14 @@ ERROR_LOGS.append(error_msg)
 if len(ERROR_LOGS) > 20:
 ERROR_LOGS.pop(0)
 if ADMIN_CHAT_ID:
-send_bale_message(ADMIN_CHAT_ID, f"⚠️ خطای سیستمی در ربات:\n{errormsg}")
+send_bale_message(ADMIN_CHAT_ID, f"⚠️ خطای سیستمی در ربات:\n{error_msg}")
 
 @app.route('/')
 def home():
 return "Bot is running successfully!", 200
 
 def load_database():
+
 if os.path.exists(DB_FILE):
 try:
 with open(DB_FILE, 'r', encoding='utf-8') as f:
@@ -51,6 +53,7 @@ json.dump(data, f, ensure_ascii=False, indent=4)
 except Exception as e:
 print(f"DB Save Error: {e}")
 
+
 ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE = load_database()
 
 def send_bale_message(chat_id, text, reply_markup=None):
@@ -65,6 +68,7 @@ response = requests.post(url, json=payload, timeout=15, verify=False)
 if response.status_code == 200:
 return response.json()
 except Exception as e:
+
 print(f"Send Message Error: {e}")
 return None
 
@@ -80,7 +84,9 @@ pass
 
 def answer_callback_query(callback_query_id, text="انجام شد"):
 url = f"{BASE_URL}/answerCallbackQuery"
-payload = {'callback_query_id': callback_query_id, 'text': text, 'show_alert': False}
+payload = {'callback_query_id': 
+
+callback_query_id, 'text': text, 'show_alert': False}
 try:
 requests.post(url, json=payload, timeout=10, verify=False)
 except Exception as e:
@@ -95,6 +101,7 @@ return {
 ]
 }
 
+
 def get_signal_keyboard(symbol, p_data=None):
 t1 = "✅ TP1 (تایید شده)" if (p_data and p_data.get('hit_tp1')) else "🎯 TP1"
 t2 = "✅ TP2 (تایید شده)" if (p_data and p_data.get('hit_tp2')) else "🎯 TP2"
@@ -107,20 +114,20 @@ return {
 }
 
 def fetch_toobit_candles(symbol, interval='15m', limit=300):
+
 url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
 session = requests.Session()
 session.trust_env = False
-for  in range(2):
+for _ in range(2):
 try:
 response = session.get(url, timeout=15, verify=False)
 data = response.json()
 if not isinstance(data, list) or len(data) == 0: return None
 df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'qav', 'not', 'tbav', 'tbqav'])
 df[['open', 'high', 'low', 'close', 'volume']] = df[['open', 'high', 'low', 'close', 'volume']].astype(float)
-return
-
-df
+return df
 except Exception:
+
 time.sleep(1)
 return None
 
@@ -135,7 +142,9 @@ if isinstance(data, list) and len(data) > 0 and 'price' in data[0]: return float
 elif isinstance(data, dict):
 if 'price' in data: return float(data['price'])
 elif 'result' in data and 'price' in data['result']: return float(data['result']['price'])
-elif 'data' in data and isinstance(data['data'], dict) and 'price' in data['data']: return float(data['data']['price'])
+elif 'data' in data and isinstance(data['data'], dict) and 'price' in data['data']: return float(data['data']
+
+['price'])
 return None
 except Exception as e:
 print(f"Price Fetch Error for {symbol}: {e}")
@@ -149,7 +158,9 @@ gain = (delta.where(delta > 0, 0.0)).rolling(window=period).mean()
 loss = (-delta.where(delta < 0, 0.0)).rolling(window=period).mean()
 rs = gain / (loss + 1e-10)
 df['rsi'] = 100 - (100 / (1 + rs))
-tr = pd.concat([(df['high'] - df['low']), (df['high'] - df['close'].shift()).abs(), (df['low'] - df['close'].shift()).abs()], axis=1).max(axis=1)
+tr = pd.concat([(df['high'] - df['low']), (df['high'] - df['close'].shift()).abs(), (df['low'] - 
+
+df['close'].shift()).abs()], axis=1).max(axis=1)
 df['atr'] = tr.rolling(window=period).mean()
 return df
 
@@ -165,8 +176,9 @@ pnl_percent = (exit_price - entry) / entry
 else:
 pnl_percent = (entry - exit_price) / entry
 
-pnl_usd = trade_size  pnl_percent
+pnl_usd = trade_size * pnl_percent
 PAPER_BALANCE += pnl_usd
+
 
 p['status'] = 'CLOSED'
 p['exit_price'] = exit_price
@@ -184,10 +196,10 @@ f"📢 گزارش بسته شدن معامله (دمو) \n"
 f"──────────────────────\n"
 f"🔹 نماد: {p['symbol']} ({position_type})\n"
 f"💵 قیمت ورود: {entry:.4f}\n"
-f"🏁 قیمت خروج ({reason}): {exit_price:.4f}\n"
-f"💰 سود / زیان معامله: {pnl_usd:+.2f} latex
-\n" f"💳 موجودی جدید حساب دمو: {PAPER_BALANCE:.2f} 
 
+f"🏁 قیمت خروج ({reason}): {exit_price:.4f}\n"
+f"💰 سود / زیان معامله: {pnl_usd:+.2f} 
+ 
 \n"
 f"──────────────────────"
 )
@@ -198,6 +210,7 @@ if CHANNEL_ID:
 send_bale_message(CHANNEL_ID, report_text)
 
 def scan_and_notify(chat_id, notify_if_empty=False):
+
 global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, CHANNEL_ID, PAPER_BALANCE
 symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'BNBUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'DOTUSDT']
 signals_found = 0
@@ -212,6 +225,7 @@ atr = float(df_15m['atr'].iloc[-2])
 rsi = float(df_15m['rsi'].iloc[-2])
 ema50 = float(df_15m['ema50'].iloc[-2])
 ema200 = float(df_15m['ema200'].iloc[-2])
+
 current_close = float(df_15m['close'].iloc[-2])
 
 if pd.isna(atr) or atr <= 0 or pd.isna(rsi): continue
@@ -224,11 +238,12 @@ if is_long or is_short:
 realtime_price = fetch_current_price(symbol) or current_close
 
 if is_long:
-sl = realtime_price - (1.5  atr)
-tp1 = realtime_price + (1.5  atr)
-tp2 = realtime_price + (3.0  atr)
+sl = realtime_price - (1.5 * atr)
+tp1 = realtime_price + (1.5 * atr)
+tp2 = realtime_price + (3.0 * atr)
 tp3 = realtime_price + (4.5 * atr)
 signals_found += 1
+
 
 pos = {
 'symbol': symbol, 'type': 'LONG', 'entry': realtime_price, 'sl': sl,
@@ -240,13 +255,12 @@ ACTIVE_POSITIONS.append(pos)
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
 msg = (
-f"🚀 سیگنال خودکار
-
-بازار (LONG) \n"
+f"🚀 سیگنال خودکار بازار (LONG) \n"
 f"──────────────────────\n"
 f"🔹 نماد: {symbol}\n"
 f"💵 قیمت ورود: {realtime_price:.4f}\n"
 f"🎯 TP1: {tp1:.4f}\n"
+
 f"🎯 TP2: {tp2:.4f}\n"
 f"🎯 TP3: {tp3:.4f}\n"
 f"🛑 حد ضرر اولیه: {sl:.4f}\n"
@@ -263,10 +277,10 @@ if CHANNEL_ID:
 send_bale_message(CHANNEL_ID, msg)
 
 elif is_short:
-sl = realtime_price + (1.5  atr)
-tp1 = realtime_price - (1.5  atr)
-tp2 = realtime_price - (3.0  atr)
-tp3 = realtime_price - (4.5  atr)
+sl = realtime_price + (1.5 * atr)
+tp1 = realtime_price - (1.5 * atr)
+tp2 = realtime_price - (3.0 * atr)
+tp3 = realtime_price - (4.5 * atr)
 signals_found += 1
 
 pos = {
@@ -294,7 +308,9 @@ res = send_bale_message(ADMIN_CHAT_ID, msg, reply_markup=get_signal_keyboard(sym
 try:
 if res and 'result' in res:
 pos['msg_id'] = res['result']['message_id']
-save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+save_database(ACTIVE_POSITIONS, 
+
+TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 except: pass
 if CHANNEL_ID:
 send_bale_message(CHANNEL_ID, msg)
@@ -310,19 +326,22 @@ global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
 try:
 data = request.json
 if not data:
+
 return jsonify({"status": "error", "message": "No JSON data received"}), 400
 
 symbol = data.get('symbol', 'BTCUSDT').upper()
 position_type = data.get('type', 'LONG').upper()
 
 price = fetch_current_price(symbol) or float(data.get('price', 60000.0))
-sl = float(data.get('sl', price  0.99 if position_type == 'LONG' else price  1.01))
-tp1 = float(data.get('tp1', price  1.01 if position_type == 'LONG' else price  0.99))
-tp2 = float(data.get('tp2', price  1.02 if position_type == 'LONG' else price  0.98))
-tp3 = float(data.get('tp3', price  1.03 if position_type == 'LONG' else price  0.97))
+sl = float(data.get('sl', price * 0.99 if position_type == 'LONG' else price * 1.01))
+tp1 = float(data.get('tp1', price * 1.01 if position_type == 'LONG' else price * 0.99))
+tp2 = float(data.get('tp2', price * 1.02 if position_type == 'LONG' else price * 0.98))
+tp3 = float(data.get('tp3', price * 1.03 if position_type == 'LONG' else price * 0.97))
 
 if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
-return jsonify({"status": "error", "message": "Active position already exists for this symbol"}), 400
+return jsonify({"status": "error", "message": 
+
+"Active position already exists for this symbol"}), 400
 
 pos = {
 'symbol': symbol, 'type': position_type, 'entry': price, 'sl': sl,
@@ -337,6 +356,7 @@ icon = "🚀" if position_type == 'LONG' else "📉"
 msg = (
 f"{icon} سیگنال تریدینگ‌ویو ({position_type}) \n"
 f"──────────────────────\n"
+
 f"🔹 نماد: {symbol}\n"
 f"💵 قیمت ورود: {price:.4f}\n"
 f"🎯 TP1: {tp1:.4f}\n"
@@ -352,6 +372,7 @@ if res and 'result' in res:
 pos['msg_id'] = res['result']['message_id']
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 except: pass
+
 if CHANNEL_ID:
 send_bale_message(CHANNEL_ID, msg)
 
@@ -362,14 +383,13 @@ return jsonify({"status": "error", "message": str(e)}), 500
 
 def automated_price_monitor():
 global ADMIN_CHAT_ID, ACTIVE_POSITIONS, TRADE_HISTORY, PAPER_BALANCE
-pr
-
-int("Price monitor background thread started successfully.")
+print("Price monitor background thread started successfully.")
 while True:
 try:
 time.sleep(5)
 if not ACTIVE_POSITIONS:
 continue
+
 
 for p in list(ACTIVE_POSITIONS):
 try:
@@ -388,6 +408,7 @@ continue
 
 # ۲. بررسی TP1
 if not p.get('hit_tp1', False):
+
 if (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1']):
 p['hit_tp1'] = True
 p['sl'] = entry
@@ -395,12 +416,13 @@ p['sl'] = entry
 
 part_size = 33.33
 pct = (p['tp1'] - entry) / entry if p_type == 'LONG' else (entry - p['tp1']) / entry
-pnl_part = part_size  pct
+pnl_part = part_size * pct
 PAPER_BALANCE += pnl_part
 TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
 msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part:+.2f} $`) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
+
 if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1)
 if CHANNEL_ID: send_bale_message(CHANNEL_ID, msg_tp1)
 if p.get('msg_id') and ADMIN_CHAT_ID:
@@ -414,7 +436,8 @@ p['hit_tp2'] = True
 
 part_size = 33.33
 pct = (p['tp2'] - entry) / entry if p_type == 'LONG' else (entry - p['tp2']) / entry
-pnl_part = part_size  pct
+pnl_part = part_size * pct
+
 PAPER_BALANCE += pnl_part
 TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
@@ -427,6 +450,7 @@ edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['sym
 continue
 
 # ۴. بررسی TP3
+
 if (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3']):
 close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
 continue
@@ -443,7 +467,9 @@ while True:
 try:
 time.sleep(1200)
 if ADMIN_CHAT_ID:
-scan_and_notify(ADMIN_CHAT_ID, notify_if_empty=False)
+scan_and_notify(ADMIN_CHAT_ID, 
+
+notify_if_empty=False)
 except Exception as e:
 print(f"Background scanner error: {e}")
 time.sleep(60)
@@ -460,6 +486,7 @@ if response.status_code == 200:
 data = response.json()
 if data.get('ok'):
 for update in data['result']:
+
 offset = update['update_id'] + 1
 
 if 'callback_query' in update:
@@ -477,24 +504,23 @@ if not ACTIVE_POSITIONS:
 send_bale_message(chat_id, "📈 در حال حاضر هیچ پوزیشن فعالی وجود ندارد.")
 else:
 txt = "📈 پوزیشن‌های فعال دمو:\n"
+
 for p in ACTIVE_POSITIONS:
 txt += f"- {p['symbol']} ({p['type']}) | ورود: {p['entry']} | حد ضرر: {p['sl']}\n"
 send_bale_message(chat_id, txt)
 elif data_action == 'stats':
 total_trades = len(TRADE_HISTORY)
 wins = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) > 0])
-losses = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) <
-
-= 0])
-win_rate = (wins / total_trades  100) if total_trades > 0 else 0.0
+losses = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) <= 0])
+win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
 total_pnl = sum([t.get('pnl', 0.0) for t in TRADE_HISTORY])
 
 stats_txt = (
 f"📊 گزارش حساب دمو و وین‌ریت:\n"
 f"──────────────────────\n"
-f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} latex
-\n" f"🎯 کل معاملات بسته شده: {total_trades}\n" f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n" f"📈 درصد وین‌ریت: {win_rate:.1f}%\n" f"💰 سود/زیان خالص:* {total_pnl:+.2f} 
+f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} 
 
+ 
 \n"
 f"──────────────────────"
 )
@@ -505,6 +531,7 @@ status_msg = (
 f"⚙️ وضعیت سیستم ربات:\n"
 f"• مانیتورینگ قیمت: فعال\n"
 f"• تعداد خطاهای اخیر ثبت شده: {len(ERROR_LOGS)}\n\n"
+
 f"آخرین خطاها:\n{logs_text}"
 )
 send_bale_message(chat_id, status_msg)
@@ -533,6 +560,7 @@ elif action_type == 'tp2':
 p['hit_tp2'] = True
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
+
 send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت شد.")
 elif action_type == 'tp3':
 curr_p = fetch_current_price(sym) or p['tp3']
@@ -550,6 +578,7 @@ text = msg['text'].strip()
 
 if ADMIN_CHAT_ID is None:
 ADMIN_CHAT_ID = chat_id
+
 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
 if text == '/start':
@@ -563,6 +592,7 @@ if name == 'main':
 threading.Thread(target=automated_price_monitor, daemon=True).start()
 threading.Thread(target=automated_background_scanner, daemon=True).start()
 threading.Thread(target=start_telegram_bot, daemon=True).start()
+
 
 port = int(os.environ.get("PORT", 10000))
 app.run(host='0.0.0.0', port=port, debug=False)
