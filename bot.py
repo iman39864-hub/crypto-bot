@@ -205,7 +205,6 @@ def scan_and_notify(chat_id, notify_if_empty=False):
             atr = float(df_15m['atr'].iloc[-2])
             rsi = float(df_15m['rsi'].iloc[-2])
             ema50 = float(df_15m['ema50'].iloc[-2])
-            ema200 = float(df_15m['ema200'].iloc[-2])
             current_close = float(df_15m['close'].iloc[-2])
 
             if pd.isna(atr) or atr <= 0 or pd.isna(rsi): continue
@@ -363,6 +362,11 @@ def automated_price_monitor():
                     entry = p['entry']
                     p_type = p['type']
 
+                    # بررسی مقداردهی اولیه فیلدهای کلیدی جهت جلوگیری از خطای محاسبه
+                    if 'hit_tp1' not in p: p['hit_tp1'] = False
+                    if 'hit_tp2' not in p: p['hit_tp2'] = False
+                    if 'hit_tp3' not in p: p['hit_tp3'] = False
+
                     # 1. بررسی حد ضرر (SL)
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
@@ -371,12 +375,12 @@ def automated_price_monitor():
 
                     # 2. بررسی TP3 (هدف نهایی)
                     hit_tp3_cond = (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3'])
-                    if hit_tp3_cond:
+                    if hit_tp3_cond and not p.get('hit_tp3', False):
                         p['hit_tp3'] = True
                         close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
                         continue
 
-                    # 3. بررسی TP2 (اگر حتی از TP2 رد شده باشد، هم TP1 و هم TP2 اعمال می‌شوند)
+                    # 3. بررسی TP2
                     hit_tp2_cond = (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2'])
                     if hit_tp2_cond and not p.get('hit_tp2', False):
                         if not p.get('hit_tp1', False):
@@ -405,7 +409,7 @@ def automated_price_monitor():
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
                         continue
 
-                    # 4. بررسی TP1 معمولی
+                    # 4. بررسی TP1
                     hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
                     if hit_tp1_cond and not p.get('hit_tp1', False):
                         p['hit_tp1'] = True
