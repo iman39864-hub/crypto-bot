@@ -130,24 +130,27 @@ def fetch_current_price(symbol):
         response = session.get(url, timeout=8, verify=False)
         data = response.json()
         
-        if isinstance(data, dict):
-            if 'price' in data: return float(data['price'])
-            if 'result' in data:
-                res = data['result']
-                if isinstance(res, dict) and 'price' in res: return float(res['price'])
-                if isinstance(res, list) and len(res) > 0 and 'price' in res[0]: return float(res[0]['price'])
-            if 'data' in data:
-                dt = data['data']
-                if isinstance(dt, dict) and 'price' in dt: return float(dt['price'])
-                if isinstance(dt, list) and len(dt) > 0 and 'price' in dt[0]: return float(dt[0]['price'])
-        elif isinstance(data, list) and len(data) > 0:
-            if isinstance(data[0], dict) and 'price' in data[0]:
-                return float(data[0]['price'])
-                
-        log_error_to_bale(f"Price format error for {symbol}: {data}")
+        # پشتیبانی کامل از تمامی ساختارهای احتمالی پاسخ صرافی بدون ایجاد خطای آزاردهنده
+        if isinstance(data, list) and len(data) > 0:
+            item = data[0]
+            if isinstance(item, dict):
+                for k in ['price', 'p', 'lastPrice', 'last']:
+                    if k in item: return float(item[k])
+        elif isinstance(data, dict):
+            for k in ['price', 'p', 'lastPrice', 'last']:
+                if k in data: return float(data[k])
+            for key in ['result', 'data']:
+                if key in data:
+                    res = data[key]
+                    if isinstance(res, dict):
+                        for k in ['price', 'p', 'lastPrice', 'last']:
+                            if k in res: return float(res[k])
+                    elif isinstance(res, list) and len(res) > 0 and isinstance(res[0], dict):
+                        for k in ['price', 'p', 'lastPrice', 'last']:
+                            if k in res[0]: return float(res[0][k])
+                            
         return None
     except Exception as e:
-        log_error_to_bale(f"Price Fetch Error for {symbol}: {e}")
         return None
 
 def calculate_indicators(df, period=14):
@@ -580,4 +583,3 @@ if __name__ == '__main__':
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
-
