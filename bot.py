@@ -17,7 +17,7 @@ DB_FILE = 'positions_db.json'
 ADMIN_CHAT_ID = None
 CHANNEL_ID = None
 
-# تنظیمات مدیریت سرمایه جدید
+# تنظیمات مدیریت سرمایه
 DEFAULT_MARGIN = 15.0  # مارجین هر معامله (بین 10 تا 20 دلار)
 LEVERAGE = 10          # اهرم معامله
 INITIAL_BALANCE = 100.0 # موجودی اولیه کل
@@ -58,13 +58,15 @@ def save_database(active, history, admin_id, balance):
 
 ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE = load_database()
 
-def send_bale_message(chat_id, text, reply_markup=None):
+def send_bale_message(chat_id, text, reply_markup=None, reply_to_message_id=None):
     if not chat_id:
         return None
     url = f"{BASE_URL}/sendMessage"
     payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}
     if reply_markup:
         payload['reply_markup'] = reply_markup
+    if reply_to_message_id:
+        payload['reply_to_message_id'] = reply_to_message_id
     try:
         response = requests.post(url, json=payload, timeout=15, verify=False)
         if response.status_code == 200:
@@ -104,10 +106,11 @@ def get_signal_keyboard(symbol, p_data=None):
     t1 = "✅ TP1 (تایید شده)" if (p_data and p_data.get('hit_tp1')) else "🎯 TP1"
     t2 = "✅ TP2 (تایید شده)" if (p_data and p_data.get('hit_tp2')) else "🎯 TP2"
     t3 = "✅ TP3 (تایید شده)" if (p_data and p_data.get('hit_tp3')) else "🎯 TP3"
+    sl_text = "❌ SL (تایید شده)" if (p_data and p_data.get('hit_sl')) else "🛑 ثبت لمس SL (خروج با ضرر)"
     return {
         "inline_keyboard": [
             [{"text": t1, "callback_data": f"tp1_{symbol}"}, {"text": t2, "callback_data": f"tp2_{symbol}"}],
-            [{"text": t3, "callback_data": f"tp3_{symbol}"}, {"text": "🛑 ثبت لمس SL (خروج با ضرر)", "callback_data": f"sl_{symbol}"}]
+            [{"text": t3, "callback_data": f"tp3_{symbol}"}, {"text": sl_text, "callback_data": f"sl_{symbol}"}]
         ]
     }
 
@@ -170,13 +173,11 @@ def calculate_indicators(df, period=14):
     return df
 
 def calculate_pnl(entry, exit_price, position_type, margin=DEFAULT_MARGIN, leverage=LEVERAGE):
-    """محاسبه سود/زیان دلاری بر اساس مارجین، اهرم و درصد تغییرات قیمت"""
     if position_type == 'LONG':
         price_change_pct = (exit_price - entry) / entry
     else:
         price_change_pct = (entry - exit_price) / entry
     
-    # سود/زیان = مارجین × اهرم × درصد تغییر قیمت
     pnl_usd = margin * leverage * price_change_pct
     return pnl_usd
 
@@ -187,7 +188,16 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     position_type = p['type']
     margin = p.get('margin', DEFAULT_MARGIN)
     
-    # محاسبه سود کل بر اساس قیمت خروج نهایی
+    if "TP3" in reason or "هدف نهایی" in reason:
+        p['hit_tp3'] = True
+        p['hit_tp1'] = True
+        p['hit_tp2'] = True
+    elif "SL" in reason or "ضرر" in reason:
+        p['hit_sl'] = True
+
+    if p.get('msg_id') and ADMIN_CHAT_ID:
+        edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+
     pnl_usd = calculate_pnl(entry, exit_price, position_type, margin, LEVERAGE)
 
     PAPER_BALANCE += pnl_usd
@@ -215,7 +225,7 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     )
     print(f"Closed trade: {p['symbol']} with PnL: {pnl_usd}")
     if ADMIN_CHAT_ID:
-        send_bale_message(ADMIN_CHAT_ID, report_text)
+        send_bale_message(ADMIN_CHAT_ID, report_text, reply_to_message_id=p.get('msg_id'))
 
 def scan_and_notify(chat_id, notify_if_empty=False):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
@@ -251,7 +261,7 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                     pos = {
                         'symbol': symbol, 'type': 'LONG', 'entry': realtime_price, 'sl': sl,
                         'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'margin': DEFAULT_MARGIN, 'status': 'ACTIVE',
-                        'hit_tp1': False, 'hit_tp2': False, 'hit_tp3': False, 'risk_free': False,
+                        'hit_tp1': False, 'hit_tp2': False, 'hit_tp3': False, 'hit_sl': False, 'risk_free': False,
                         'msg_id': None
                     }
                     ACTIVE_POSITIONS.append(pos)
@@ -286,7 +296,7 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                     pos = {
                         'symbol': symbol, 'type': 'SHORT', 'entry': realtime_price, 'sl': sl,
                         'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'margin': DEFAULT_MARGIN, 'status': 'ACTIVE',
-                        'hit_tp1': False, 'hit_tp2': False, 'hit_tp3': False, 'risk_free': False,
+                        'hit_tp1': False, 'hit_tp2': False, 'hit_tp3': False, 'hit_sl': False, 'risk_free': False,
                         'msg_id': None
                     }
                     ACTIVE_POSITIONS.append(pos)
@@ -339,7 +349,7 @@ def tradingview_webhook():
         pos = {
             'symbol': symbol, 'type': position_type, 'entry': price, 'sl': sl,
             'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'margin': DEFAULT_MARGIN, 'status': 'ACTIVE',
-            'hit_tp1': False, 'hit_tp2': False, 'hit_tp3': False, 'risk_free': False,
+            'hit_tp1': False, 'hit_tp2': False, 'hit_tp3': False, 'hit_sl': False, 'risk_free': False,
             'msg_id': None
         }
         ACTIVE_POSITIONS.append(pos)
@@ -392,10 +402,12 @@ def automated_price_monitor():
                     if 'hit_tp1' not in p: p['hit_tp1'] = False
                     if 'hit_tp2' not in p: p['hit_tp2'] = False
                     if 'hit_tp3' not in p: p['hit_tp3'] = False
+                    if 'hit_sl' not in p: p['hit_sl'] = False
 
                     # 1. بررسی حد ضرر (SL)
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
+                        p['hit_sl'] = True
                         close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
                         continue
 
@@ -417,7 +429,7 @@ def automated_price_monitor():
                             PAPER_BALANCE += pnl_part1
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part1})
                             msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part1:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1)
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1, reply_to_message_id=p.get('msg_id'))
 
                         p['hit_tp2'] = True
                         pnl_part2 = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
@@ -426,7 +438,7 @@ def automated_price_monitor():
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
                         msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n💰 سود پله دوم ({pnl_part2:+.2f} $) واریز شد."
-                        if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp2)
+                        if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp2, reply_to_message_id=p.get('msg_id'))
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
                         continue
@@ -444,7 +456,7 @@ def automated_price_monitor():
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
                         msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
-                        if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1)
+                        if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1, reply_to_message_id=p.get('msg_id'))
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
                         continue
@@ -550,7 +562,7 @@ def start_telegram_bot():
                                             TRADE_HISTORY.append({'symbol': sym, 'type': p['type'], 'pnl': pnl_manual})
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود پله اول ({pnl_manual:+.2f} $) واریز شد.")
+                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود پله اول ({pnl_manual:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
                                         elif action_type == 'tp2':
                                             p['hit_tp2'] = True
                                             pnl_manual2 = calculate_pnl(p['entry'], p['tp2'], p['type'], margin, LEVERAGE) * 0.4
@@ -558,12 +570,14 @@ def start_telegram_bot():
                                             TRADE_HISTORY.append({'symbol': sym, 'type': p['type'], 'pnl': pnl_manual2})
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت و سود ({pnl_manual2:+.2f} $) واریز شد.")
+                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت و سود ({pnl_manual2:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
                                         elif action_type == 'tp3':
+                                            p['hit_tp3'] = True
                                             curr_p = fetch_current_price(sym) or p['tp3']
                                             close_position_completely(p, curr_p, reason="هدف نهایی (TP3 دستی)")
                                             break
                                         elif action_type == 'sl':
+                                            p['hit_sl'] = True
                                             close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
                                             break
 
@@ -597,4 +611,3 @@ if __name__ == 'main' or __name__ == '__main__':
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
-
