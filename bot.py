@@ -18,22 +18,12 @@ ADMIN_CHAT_ID = None
 CHANNEL_ID = None
 
 # تنظیمات مدیریت سرمایه
-DEFAULT_MARGIN = 15.0  # مارجین هر معامله
+DEFAULT_MARGIN = 15.0  # مارجین هر معامله (بین 10 تا 20 دلار)
 LEVERAGE = 10          # اهرم معامله
 INITIAL_BALANCE = 100.0 # موجودی اولیه کل
 
 app = Flask(__name__)
 ERROR_LOGS = []
-
-def get_render_ip():
-    try:
-        response = requests.get('https://api.ipify.org?format=json', timeout=5)
-        ip = response.json().get('ip')
-        print(f"==================== RENDER IP: {ip} ====================")
-        return ip
-    except Exception as e:
-        print(f"Could not get IP: {e}")
-        return None
 
 def log_error_to_bale(error_msg):
     global ERROR_LOGS
@@ -209,6 +199,7 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
     pnl_usd = calculate_pnl(entry, exit_price, position_type, margin, LEVERAGE)
+
     PAPER_BALANCE += pnl_usd
 
     p['status'] = 'CLOSED'
@@ -232,6 +223,7 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         f"💳 **موجودی جدید حساب دمو:** {PAPER_BALANCE:.2f} $\n"
         f"──────────────────────"
     )
+    print(f"Closed trade: {p['symbol']} with PnL: {pnl_usd}")
     if ADMIN_CHAT_ID:
         send_bale_message(ADMIN_CHAT_ID, report_text, reply_to_message_id=p.get('msg_id'))
 
@@ -607,9 +599,6 @@ def start_telegram_bot():
             time.sleep(3)
 
 if __name__ == 'main' or __name__ == '__main__':
-    # دریافت و چاپ IP سرور در لاگ‌های Render جهت اتصال به ال‌بانک
-    get_render_ip()
-
     if os.path.exists(DB_FILE):
         try:
             os.remove(DB_FILE)
