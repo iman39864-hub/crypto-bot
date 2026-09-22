@@ -15,12 +15,12 @@ BASE_URL = f'https://tapi.bale.ai/bot{TOKEN}'
 DB_FILE = 'positions_db.json'
 
 ADMIN_CHAT_ID = None
-CHANNEL_ID = None
 
-# تنظیمات مدیریت سرمایه
-DEFAULT_MARGIN = 15.0  # مارجین هر معامله (بین 10 تا 20 دلار)
+# تنظیمات مدیریت سرمایه و کارمزد
+DEFAULT_MARGIN = 15.0  # مارجین هر معامله
 LEVERAGE = 10          # اهرم معامله
 INITIAL_BALANCE = 100.0 # موجودی اولیه کل
+FEE_RATE = 0.0005      # کارمزد 0.05 درصدی برای هر اجرای سفارش (ورود/خروج)
 
 app = Flask(__name__)
 ERROR_LOGS = []
@@ -155,7 +155,6 @@ def fetch_current_price(symbol):
                     elif isinstance(res, list) and len(res) > 0 and isinstance(res[0], dict):
                         for k in ['price', 'p', 'lastPrice', 'last']:
                             if k in res[0]: return float(res[0][k])
-                            
         return None
     except Exception as e:
         return None
@@ -199,14 +198,18 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
     pnl_usd = calculate_pnl(entry, exit_price, position_type, margin, LEVERAGE)
+    
+    # محاسبه کارمزد خروج بر اساس حجم کل یا باقیمانده پوزیشن
+    close_fee = (margin * leverage) * FEE_RATE
+    net_pnl = pnl_usd - close_fee
 
-    PAPER_BALANCE += pnl_usd
+    PAPER_BALANCE += net_pnl
 
     p['status'] = 'CLOSED'
     p['exit_price'] = exit_price
-    p['pnl'] = pnl_usd
+    p['pnl'] = net_pnl
 
-    TRADE_HISTORY.append({'symbol': p['symbol'], 'type': position_type, 'pnl': pnl_usd})
+    TRADE_HISTORY.append({'symbol': p['symbol'], 'type': position_type, 'pnl': net_pnl})
     
     if p in ACTIVE_POSITIONS:
         ACTIVE_POSITIONS.remove(p)
@@ -214,16 +217,16 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     report_text = (
-        f"📢 گزارش بسته شدن معامله (دمو) \n"
+        f"📢 گزارش بسته شدن معامله (دمو با احتساب کارمزد) \n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
         f"💵 قیمت ورود: {entry:.4f}\n"
         f"🏁 قیمت خروج ({reason}): {exit_price:.4f}\n"
-        f"💰 سود / زیان معامله: {pnl_usd:+.2f} $\n"
+        f"💰 سود / زیان خالص (پس از کارمزد): {net_pnl:+.2f} $\n"
         f"💳 **موجودی جدید حساب دمو:** {PAPER_BALANCE:.2f} $\n"
         f"──────────────────────"
     )
-    print(f"Closed trade: {p['symbol']} with PnL: {pnl_usd}")
+    print(f"Closed trade: {p['symbol']} with Net PnL: {net_pnl}")
     if ADMIN_CHAT_ID:
         send_bale_message(ADMIN_CHAT_ID, report_text, reply_to_message_id=p.get('msg_id'))
 
@@ -250,6 +253,10 @@ def scan_and_notify(chat_id, notify_if_empty=False):
 
             if is_long or is_short:
                 realtime_price = fetch_current_price(symbol) or current_close
+
+                # کسر کارمزد باز کردن پوزیشن از موجودی
+                open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
+                PAPER_BALANCE -= open_fee
 
                 if is_long:
                     sl = realtime_price - (1.5 * atr)
@@ -346,6 +353,10 @@ def tradingview_webhook():
         if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
             return jsonify({"status": "error", "message": "Active position already exists for this symbol"}), 400
 
+        # کسر کارمزد ورود از حساب
+        open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
+        PAPER_BALANCE -= open_fee
+
         pos = {
             'symbol': symbol, 'type': position_type, 'entry': price, 'sl': sl,
             'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'margin': DEFAULT_MARGIN, 'status': 'ACTIVE',
@@ -426,18 +437,22 @@ def automated_price_monitor():
                             p['sl'] = entry  
                             p['risk_free'] = True
                             pnl_part1 = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
-                            PAPER_BALANCE += pnl_part1
-                            TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part1})
-                            msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part1:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
+                            fee_part1 = (margin * leverage * 0.4) * FEE_RATE
+                            net_part1 = pnl_part1 - fee_part1
+                            PAPER_BALANCE += net_part1
+                            TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part1})
+                            msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود خالص پله اول ({net_part1:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
                             if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1, reply_to_message_id=p.get('msg_id'))
 
                         p['hit_tp2'] = True
                         pnl_part2 = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
-                        PAPER_BALANCE += pnl_part2
-                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part2})
+                        fee_part2 = (margin * leverage * 0.4) * FEE_RATE
+                        net_part2 = pnl_part2 - fee_part2
+                        PAPER_BALANCE += net_part2
+                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part2})
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
-                        msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n💰 سود پله دوم ({pnl_part2:+.2f} $) واریز شد."
+                        msg_tp2 = f"🎯 هدف دوم (TP2) برای {p['symbol']} لمس شد!\n💰 سود خالص پله دوم ({net_part2:+.2f} $) واریز شد."
                         if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp2, reply_to_message_id=p.get('msg_id'))
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
@@ -451,11 +466,13 @@ def automated_price_monitor():
                         p['risk_free'] = True
                         
                         pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
-                        PAPER_BALANCE += pnl_part
-                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': pnl_part})
+                        fee_part = (margin * leverage * 0.4) * FEE_RATE
+                        net_part = pnl_part - fee_part
+                        PAPER_BALANCE += net_part
+                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
-                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود پله اول ({pnl_part:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
+                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود خالص پله اول ({net_part:+.2f} $) واریز شد.\n🛡️ حد ضرر به نقطه ورود منتقل شد."
                         if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1, reply_to_message_id=p.get('msg_id'))
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
@@ -518,10 +535,10 @@ def start_telegram_bot():
                                 total_pnl = sum([t.get('pnl', 0.0) for t in TRADE_HISTORY])
 
                                 stats_txt = (
-                                    f"📊 گزارش حساب دمو و وین‌ریت (مارجین {DEFAULT_MARGIN}$ | اهرم {LEVERAGE}x):\n"
+                                    f"📊 گزارش حساب دمو و وین‌ریت (با احتساب کارمزد):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
-                                    f"🎯 کل معاملات بسته شده: {total_trades}\n"
+                                    f"🎯 کل بخش‌های معامله شده: {total_trades}\n"
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
                                     f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
                                     f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n"
@@ -558,19 +575,23 @@ def start_telegram_bot():
                                             p['sl'] = p['entry']
                                             p['risk_free'] = True
                                             pnl_manual = calculate_pnl(p['entry'], p['tp1'], p['type'], margin, LEVERAGE) * 0.4
-                                            PAPER_BALANCE += pnl_manual
-                                            TRADE_HISTORY.append({'symbol': sym, 'type': p['type'], 'pnl': pnl_manual})
+                                            fee_m = (margin * LEVERAGE * 0.4) * FEE_RATE
+                                            net_m = pnl_manual - fee_m
+                                            PAPER_BALANCE += net_m
+                                            TRADE_HISTORY.append({'symbol': sym, 'type': p['type'], 'pnl': net_m})
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود پله اول ({pnl_manual:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
+                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود خالص پله اول ({net_m:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
                                         elif action_type == 'tp2':
                                             p['hit_tp2'] = True
                                             pnl_manual2 = calculate_pnl(p['entry'], p['tp2'], p['type'], margin, LEVERAGE) * 0.4
-                                            PAPER_BALANCE += pnl_manual2
-                                            TRADE_HISTORY.append({'symbol': sym, 'type': p['type'], 'pnl': pnl_manual2})
+                                            fee_m2 = (margin * LEVERAGE * 0.4) * FEE_RATE
+                                            net_m2 = pnl_manual2 - fee_m2
+                                            PAPER_BALANCE += net_m2
+                                            TRADE_HISTORY.append({'symbol': sym, 'type': p['type'], 'pnl': net_m2})
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت و سود ({pnl_manual2:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
+                                            send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت و سود خالص ({net_m2:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
                                         elif action_type == 'tp3':
                                             p['hit_tp3'] = True
                                             curr_p = fetch_current_price(sym) or p['tp3']
@@ -593,18 +614,12 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 پنل حساب دموی خودکار ربات\n(با مارجین ۱۵$ و اهرم ۱۰x)\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 پنل حساب دموی خودکار ربات\n(با مارجین ۱۵$، اهرم ۱۰x و احتساب کارمزد)\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=menu)
         except Exception as e:
             print(f"Telegram polling error: {e}")
             time.sleep(3)
 
 if __name__ == 'main' or __name__ == '__main__':
-    if os.path.exists(DB_FILE):
-        try:
-            os.remove(DB_FILE)
-        except:
-            pass
-
     threading.Thread(target=automated_price_monitor, daemon=True).start()
     threading.Thread(target=automated_background_scanner, daemon=True).start()
     threading.Thread(target=start_telegram_bot, daemon=True).start()
