@@ -199,8 +199,7 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
 
     pnl_usd = calculate_pnl(entry, exit_price, position_type, margin, LEVERAGE)
     
-    # محاسبه کارمزد خروج بر اساس حجم کل یا باقیمانده پوزیشن
-    close_fee = (margin * leverage) * FEE_RATE
+    close_fee = (margin * LEVERAGE) * FEE_RATE
     net_pnl = pnl_usd - close_fee
 
     PAPER_BALANCE += net_pnl
@@ -254,7 +253,6 @@ def scan_and_notify(chat_id, notify_if_empty=False):
             if is_long or is_short:
                 realtime_price = fetch_current_price(symbol) or current_close
 
-                # کسر کارمزد باز کردن پوزیشن از موجودی
                 open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
                 PAPER_BALANCE -= open_fee
 
@@ -353,7 +351,6 @@ def tradingview_webhook():
         if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
             return jsonify({"status": "error", "message": "Active position already exists for this symbol"}), 400
 
-        # کسر کارمزد ورود از حساب
         open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
         PAPER_BALANCE -= open_fee
 
@@ -415,7 +412,7 @@ def automated_price_monitor():
                     if 'hit_tp3' not in p: p['hit_tp3'] = False
                     if 'hit_sl' not in p: p['hit_sl'] = False
 
-                    # 1. بررسی حد ضرر (SL)
+                    # 1. بررسی حد ضرر (SL) - اولویت اول
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         p['hit_sl'] = True
@@ -437,7 +434,7 @@ def automated_price_monitor():
                             p['sl'] = entry  
                             p['risk_free'] = True
                             pnl_part1 = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
-                            fee_part1 = (margin * leverage * 0.4) * FEE_RATE
+                            fee_part1 = (margin * LEVERAGE * 0.4) * FEE_RATE
                             net_part1 = pnl_part1 - fee_part1
                             PAPER_BALANCE += net_part1
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part1})
@@ -446,7 +443,7 @@ def automated_price_monitor():
 
                         p['hit_tp2'] = True
                         pnl_part2 = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
-                        fee_part2 = (margin * leverage * 0.4) * FEE_RATE
+                        fee_part2 = (margin * LEVERAGE * 0.4) * FEE_RATE
                         net_part2 = pnl_part2 - fee_part2
                         PAPER_BALANCE += net_part2
                         TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part2})
@@ -466,7 +463,7 @@ def automated_price_monitor():
                         p['risk_free'] = True
                         
                         pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
-                        fee_part = (margin * leverage * 0.4) * FEE_RATE
+                        fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
                         net_part = pnl_part - fee_part
                         PAPER_BALANCE += net_part
                         TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
