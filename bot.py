@@ -247,8 +247,9 @@ def scan_and_notify(chat_id, notify_if_empty=False):
 
             if pd.isna(atr) or atr <= 0 or pd.isna(rsi): continue
 
-            is_long = (current_close > ema50) and (rsi < 65) and (rsi > 40)
-            is_short = (current_close < ema50) and (rsi > 35) and (rsi < 60)
+            # شرط‌های دقیق‌تر برای بهبود وین‌ریت
+            is_long = (current_close > ema50) and (rsi < 60) and (rsi > 45)
+            is_short = (current_close < ema50) and (rsi > 40) and (rsi < 55)
 
             if is_long or is_short:
                 realtime_price = fetch_current_price(symbol) or current_close
@@ -529,7 +530,9 @@ def start_telegram_bot():
                                 wins = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) > 0])
                                 losses = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) <= 0])
                                 win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
-                                total_pnl = sum([t.get('pnl', 0.0) for t in TRADE_HISTORY])
+                                
+                                # اصلاح محاسبه سود خالص بر اساس اختلاف واقعی موجودی کل حساب با مقدار اولیه
+                                total_pnl = PAPER_BALANCE - INITIAL_BALANCE
 
                                 stats_txt = (
                                     f"📊 گزارش حساب دمو و وین‌ریت (با احتساب کارمزد):\n"
