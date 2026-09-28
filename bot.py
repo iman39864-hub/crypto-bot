@@ -247,7 +247,6 @@ def scan_and_notify(chat_id, notify_if_empty=False):
 
             if pd.isna(atr) or atr <= 0 or pd.isna(rsi): continue
 
-            # شرط‌های دقیق‌تر برای بهبود وین‌ریت
             is_long = (current_close > ema50) and (rsi < 60) and (rsi > 45)
             is_short = (current_close < ema50) and (rsi > 40) and (rsi < 55)
 
@@ -413,7 +412,7 @@ def automated_price_monitor():
                     if 'hit_tp3' not in p: p['hit_tp3'] = False
                     if 'hit_sl' not in p: p['hit_sl'] = False
 
-                    # 1. بررسی حد ضرر (SL) - اولویت اول
+                    # 1. بررسی حد ضرر (SL)
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         p['hit_sl'] = True
@@ -531,7 +530,6 @@ def start_telegram_bot():
                                 losses = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) <= 0])
                                 win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
                                 
-                                # اصلاح محاسبه سود خالص بر اساس اختلاف واقعی موجودی کل حساب با مقدار اولیه
                                 total_pnl = PAPER_BALANCE - INITIAL_BALANCE
 
                                 stats_txt = (
@@ -605,7 +603,7 @@ def start_telegram_bot():
                         elif 'message' in update:
                             msg = update['message']
                             if 'text' in msg:
-                                chat_id = msg['chat']['id']
+                                chat_id = msg['chat']['id']i
                                 text = msg['text'].strip()
 
                                 if ADMIN_CHAT_ID is None:
@@ -626,3 +624,4 @@ if __name__ == 'main' or __name__ == '__main__':
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
+8
