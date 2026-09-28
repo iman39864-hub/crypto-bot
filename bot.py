@@ -16,11 +16,10 @@ DB_FILE = 'positions_db.json'
 
 ADMIN_CHAT_ID = None
 
-# تنظیمات مدیریت سرمایه و کارمزد
-DEFAULT_MARGIN = 15.0  # مارجین هر معامله
-LEVERAGE = 10          # اهرم معامله
-INITIAL_BALANCE = 100.0 # موجودی اولیه کل
-FEE_RATE = 0.0005      # کارمزد 0.05 درصدی برای هر اجرای سفارش (ورود/خروج)
+DEFAULT_MARGIN = 15.0
+LEVERAGE = 10
+INITIAL_BALANCE = 100.0
+FEE_RATE = 0.0005
 
 app = Flask(__name__)
 ERROR_LOGS = []
@@ -198,12 +197,10 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
 
     pnl_usd = calculate_pnl(entry, exit_price, position_type, margin, LEVERAGE)
-    
     close_fee = (margin * LEVERAGE) * FEE_RATE
     net_pnl = pnl_usd - close_fee
 
     PAPER_BALANCE += net_pnl
-
     p['status'] = 'CLOSED'
     p['exit_price'] = exit_price
     p['pnl'] = net_pnl
@@ -225,7 +222,6 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         f"💳 **موجودی جدید حساب دمو:** {PAPER_BALANCE:.2f} $\n"
         f"──────────────────────"
     )
-    print(f"Closed trade: {p['symbol']} with Net PnL: {net_pnl}")
     if ADMIN_CHAT_ID:
         send_bale_message(ADMIN_CHAT_ID, report_text, reply_to_message_id=p.get('msg_id'))
 
@@ -252,7 +248,6 @@ def scan_and_notify(chat_id, notify_if_empty=False):
 
             if is_long or is_short:
                 realtime_price = fetch_current_price(symbol) or current_close
-
                 open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
                 PAPER_BALANCE -= open_fee
 
@@ -412,21 +407,18 @@ def automated_price_monitor():
                     if 'hit_tp3' not in p: p['hit_tp3'] = False
                     if 'hit_sl' not in p: p['hit_sl'] = False
 
-                    # 1. بررسی حد ضرر (SL)
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         p['hit_sl'] = True
                         close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
                         continue
 
-                    # 2. بررسی TP3
                     hit_tp3_cond = (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3'])
                     if hit_tp3_cond and not p.get('hit_tp3', False):
                         p['hit_tp3'] = True
                         close_position_completely(p, p['tp3'], reason="هدف نهایی (TP3)")
                         continue
 
-                    # 3. بررسی TP2
                     hit_tp2_cond = (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2'])
                     if hit_tp2_cond and not p.get('hit_tp2', False):
                         if not p.get('hit_tp1', False):
@@ -455,7 +447,6 @@ def automated_price_monitor():
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
                         continue
 
-                    # 4. بررسی TP1
                     hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
                     if hit_tp1_cond and not p.get('hit_tp1', False):
                         p['hit_tp1'] = True
@@ -603,7 +594,7 @@ def start_telegram_bot():
                         elif 'message' in update:
                             msg = update['message']
                             if 'text' in msg:
-                                chat_id = msg['chat']['id']i
+                                chat_id = msg['chat']['id']
                                 text = msg['text'].strip()
 
                                 if ADMIN_CHAT_ID is None:
@@ -617,11 +608,10 @@ def start_telegram_bot():
             print(f"Telegram polling error: {e}")
             time.sleep(3)
 
-if __name__ == 'main' or __name__ == '__main__':
+if __name__ == '__main__':
     threading.Thread(target=automated_price_monitor, daemon=True).start()
     threading.Thread(target=automated_background_scanner, daemon=True).start()
     threading.Thread(target=start_telegram_bot, daemon=True).start()
 
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
-8
