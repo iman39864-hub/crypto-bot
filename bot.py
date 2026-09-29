@@ -213,7 +213,7 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     report_text = (
-        f"📢 گزارش بسته شدن معامله (دمو با احتساب کارمزد) \n"
+        f"📢 گزارش بسته شدن معامله (بهینه‌شده با کارمزد) \n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
         f"💵 قیمت ورود: {entry:.4f}\n"
@@ -239,12 +239,14 @@ def scan_and_notify(chat_id, notify_if_empty=False):
             atr = float(df_15m['atr'].iloc[-2])
             rsi = float(df_15m['rsi'].iloc[-2])
             ema50 = float(df_15m['ema50'].iloc[-2])
+            ema200 = float(df_15m['ema200'].iloc[-2])
             current_close = float(df_15m['close'].iloc[-2])
 
             if pd.isna(atr) or atr <= 0 or pd.isna(rsi): continue
 
-            is_long = (current_close > ema50) and (rsi < 60) and (rsi > 45)
-            is_short = (current_close < ema50) and (rsi > 40) and (rsi < 55)
+            # [بهینه‌سازی شده]: فیلتر روند قوی‌تر با EMA200 و بازه مطمئن‌تر RSI
+            is_long = (current_close > ema50) and (ema50 > ema200) and (50 < rsi < 65)
+            is_short = (current_close < ema50) and (ema50 < ema200) and (35 < rsi < 50)
 
             if is_long or is_short:
                 realtime_price = fetch_current_price(symbol) or current_close
@@ -252,10 +254,11 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                 PAPER_BALANCE -= open_fee
 
                 if is_long:
-                    sl = realtime_price - (1.5 * atr)
-                    tp1 = realtime_price + (1.5 * atr)
-                    tp2 = realtime_price + (3.0 * atr)
-                    tp3 = realtime_price + (4.5 * atr)
+                    # [بهینه‌سازی شده]: افزایش ضریب ATR برای استاپ لاس و ریسک به ریوارد امن‌تر
+                    sl = realtime_price - (2.0 * atr)
+                    tp1 = realtime_price + (2.0 * atr)
+                    tp2 = realtime_price + (3.5 * atr)
+                    tp3 = realtime_price + (5.0 * atr)
                     signals_found += 1
 
                     pos = {
@@ -268,14 +271,14 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
                     msg = (
-                        f"🚀 سیگنال خودکار بازار (LONG) \n"
+                        f"🚀 سیگنال هوشمند بازار (LONG) \n"
                         f"──────────────────────\n"
                         f"🔹 نماد: {symbol} (مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x)\n"
                         f"💵 قیمت ورود: {realtime_price:.4f}\n"
                         f"🎯 TP1: {tp1:.4f}\n"
                         f"🎯 TP2: {tp2:.4f}\n"
                         f"🎯 TP3: {tp3:.4f}\n"
-                        f"🛑 حد ضرر اولیه: {sl:.4f}\n"
+                        f"🛑 حد ضرر بهینه‌شده: {sl:.4f}\n"
                         f"──────────────────────"
                     )
                     if ADMIN_CHAT_ID:
@@ -287,10 +290,10 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                         except: pass
 
                 elif is_short:
-                    sl = realtime_price + (1.5 * atr)
-                    tp1 = realtime_price - (1.5 * atr)
-                    tp2 = realtime_price - (3.0 * atr)
-                    tp3 = realtime_price - (4.5 * atr)
+                    sl = realtime_price + (2.0 * atr)
+                    tp1 = realtime_price - (2.0 * atr)
+                    tp2 = realtime_price - (3.5 * atr)
+                    tp3 = realtime_price - (5.0 * atr)
                     signals_found += 1
 
                     pos = {
@@ -303,14 +306,14 @@ def scan_and_notify(chat_id, notify_if_empty=False):
                     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
                     msg = (
-                        f"📉 سیگنال خودکار بازار (SHORT) \n"
+                        f"📉 سیگنال هوشمند بازار (SHORT) \n"
                         f"──────────────────────\n"
                         f"🔹 نماد: {symbol} (مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x)\n"
                         f"💵 قیمت ورود: {realtime_price:.4f}\n"
                         f"🎯 TP1: {tp1:.4f}\n"
                         f"🎯 TP2: {tp2:.4f}\n"
                         f"🎯 TP3: {tp3:.4f}\n"
-                        f"🛑 حد ضرر اولیه: {sl:.4f}\n"
+                        f"🛑 حد ضرر بهینه‌شده: {sl:.4f}\n"
                         f"──────────────────────"
                     )
                     if ADMIN_CHAT_ID:
@@ -324,7 +327,7 @@ def scan_and_notify(chat_id, notify_if_empty=False):
             print(f"Scan error on {symbol}: {ex}")
 
     if notify_if_empty and signals_found == 0 and chat_id:
-        send_bale_message(chat_id, "🔍 اسکن انجام شد. در حال حاضر شرایط بازار با این فیلترها مطابقت نداشت.")
+        send_bale_message(chat_id, "🔍 اسکن انجام شد. فیلترهای روند سخت‌گیرانه فعال هستند و فعلاً سیگنالی با دقت بالا یافت نشد.")
 
 @app.route('/webhook', methods=['POST'])
 def tradingview_webhook():
@@ -505,7 +508,7 @@ def start_telegram_bot():
                             answer_callback_query(cq['id'], "انجام شد ✓")
 
                             if data_action == 'scan_market':
-                                send_bale_message(chat_id, "🔍 اسکن بازار شروع شد...")
+                                send_bale_message(chat_id, "🔍 اسکن بازار با فیلترهای جدید شروع شد...")
                                 threading.Thread(target=scan_and_notify, args=(chat_id, True)).start()
                             elif data_action == 'active_positions':
                                 if not ACTIVE_POSITIONS:
@@ -603,7 +606,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 پنل حساب دموی خودکار ربات\n(با مارجین ۱۵$، اهرم ۱۰x و احتساب کارمزد)\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 پنل حساب دموی هوشمند ربات\n(با مارجین ۱۵$، اهرم ۱۰x و فیلتر روند بهینه‌شده)\nلطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=menu)
         except Exception as e:
             print(f"Telegram polling error: {e}")
             time.sleep(3)
