@@ -303,7 +303,6 @@ def periodic_auto_scanner():
     symbols = ["BTCUSDT", "ETHUSDT"]
     while True:
         try:
-            # اسکن بازار هر 15 دقیقه (900 ثانیه) یک‌بار
             time.sleep(900)
             print("Running scheduled 15-min market scan...")
             for sym in symbols:
@@ -443,7 +442,7 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
-                                    f"⚙️ وضعیت سیستم ربات:\n"
+                                    f"⚙️️ وضعیت سیستم ربات:\n"
                                     f"• حالت کاری: اسکن خودکار هر ۱۵ دقیقه (15-Min Auto-Scanner)\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -493,7 +492,7 @@ def start_telegram_bot():
                                             break
                                         elif action_type == 'sl':
                                             p['hit_sl'] = True
-                                           close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
+                                            close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
                                             break
 
                         elif 'message' in update:
