@@ -300,7 +300,12 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
 
 def periodic_auto_scanner():
     print("Periodic auto-scanner thread started.")
-    symbols = ["BTCUSDT", "ETHUSDT"]
+    symbols = [
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", 
+        "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT",
+        "LINKUSDT", "LTCUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT",
+        "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT"
+    ]
     while True:
         try:
             time.sleep(900)
@@ -442,7 +447,7 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
-                                    f"⚙️️ وضعیت سیستم ربات:\n"
+                                    f"⚙ وضعیت سیستم ربات:\n"
                                     f"• حالت کاری: اسکن خودکار هر ۱۵ دقیقه (15-Min Auto-Scanner)\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
