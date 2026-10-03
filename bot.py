@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with 15-Min Auto-Scanner Mode!", 200
+    return "Bot is running with Manual Scan Mode!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -95,6 +95,7 @@ def answer_callback_query(callback_query_id, text="انجام شد"):
 def get_main_menu_keyboard():
     return {
         "inline_keyboard": [
+            [{"text": "🔍 اسکن بازار و باز کردن پوزیشن", "callback_data": "manual_scan"}],
             [{"text": "📈 پوزیشن‌های فعال", "callback_data": "active_positions"}, {"text": "📊 آمار و وین‌ریت", "callback_data": "stats"}],
             [{"text": "⚙️ وضعیت سیستم", "callback_data": "bot_status"}, {"text": "🔄 ریست کامل حساب", "callback_data": "reset_stats"}]
         ]
@@ -171,11 +172,11 @@ def calculate_indicators(df):
 def analyze_and_open_position(symbol):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
-        return False
+        return False, "این نماد در حال حاضر پوزیشن فعال دارد."
 
     df = fetch_historical_candles(symbol, "15m", 100)
     if df is None or len(df) < 50:
-        return False
+        return False, "خطا در دریافت داده‌ها."
 
     df = calculate_indicators(df)
     last = df.iloc[-1]
@@ -200,7 +201,7 @@ def analyze_and_open_position(symbol):
         signal_type = 'SHORT'
 
     if not signal_type:
-        return False
+        return False, f"سیگنالی یافت نشد (RSI: {rsi:.1f})"
 
     if signal_type == 'LONG':
         sl = price * 0.985
@@ -227,7 +228,7 @@ def analyze_and_open_position(symbol):
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
     msg = (
-        f"{icon} سیگنال خودکار (هر ۱۵ دقیقه)\n"
+        f"{icon} سیگنال خودکار (اسکن دستی)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: {price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
@@ -243,7 +244,7 @@ def analyze_and_open_position(symbol):
                 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
         except: pass
 
-    return True
+    return True, f"موقعیت {signal_type} در {symbol} با موفقیت باز شد."
 
 def calculate_pnl(entry, exit_price, position_type, margin=DEFAULT_MARGIN, leverage=LEVERAGE):
     if position_type == 'LONG':
@@ -297,25 +298,6 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     )
     if ADMIN_CHAT_ID:
         send_bale_message(ADMIN_CHAT_ID, report_text, reply_to_message_id=p.get('msg_id'))
-
-def periodic_auto_scanner():
-    print("Periodic auto-scanner thread started.")
-    symbols = [
-        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", 
-        "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT",
-        "LINKUSDT", "LTCUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT",
-        "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT"
-    ]
-    while True:
-        try:
-            time.sleep(900)
-            print("Running scheduled 15-min market scan...")
-            for sym in symbols:
-                analyze_and_open_position(sym)
-                time.sleep(2)
-        except Exception as e:
-            print(f"Auto scanner error: {e}")
-            time.sleep(60)
 
 def automated_price_monitor():
     print("Price monitor background thread started successfully.")
@@ -401,6 +383,12 @@ def start_telegram_bot():
     global ADMIN_CHAT_ID, ACTIVE_POSITIONS, TRADE_HISTORY, PAPER_BALANCE
     offset = 0
     print("Telegram/Bale bot polling loop started.")
+    symbols_to_scan = [
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", 
+        "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT",
+        "LINKUSDT", "LTCUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT",
+        "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT"
+    ]
     while True:
         try:
             url = f"{BASE_URL}/getUpdates?offset={offset}&timeout=20"
@@ -418,7 +406,17 @@ def start_telegram_bot():
                             data_action = cq['data']
                             answer_callback_query(cq['id'], "انجام شد ✓")
 
-                            if data_action == 'active_positions':
+                            if data_action == 'manual_scan':
+                                send_bale_message(chat_id, "🔍 در حال اسکن بازار برای یافتن فرصت‌های معاملاتی...")
+                                opened_count = 0
+                                for sym in symbols_to_scan:
+                                    success, msg_res = analyze_and_open_position(sym)
+                                    if success:
+                                        opened_count += 1
+                                    time.sleep(1)
+                                if opened_count == 0:
+                                    send_bale_message(chat_id, "⚠️ در حال حاضر هیچ سیگنال مناسبی در لیست ارزها یافت نشد.")
+                            elif data_action == 'active_positions':
                                 if not ACTIVE_POSITIONS:
                                     send_bale_message(chat_id, "📈 در حال حاضر هیچ پوزیشن فعالی وجود ندارد.")
                                 else:
@@ -434,7 +432,7 @@ def start_telegram_bot():
                                 total_pnl = PAPER_BALANCE - INITIAL_BALANCE
 
                                 stats_txt = (
-                                    f"📊 گزارش حساب دمو (اسکن خودکار ۱۵ دقیقه‌ای):\n"
+                                    f"📊 گزارش حساب دمو (اسکن دستی):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل بخش‌های معامله شده: {total_trades}\n"
@@ -447,8 +445,8 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
-                                    f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن خودکار هر ۱۵ دقیقه (15-Min Auto-Scanner)\n"
+                                    f"⚙️ وضعیت سیستم ربات:\n"
+                                    f"• حالت کاری: کنترل دستی (Manual Scan)\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
@@ -512,14 +510,13 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات فعال شد و هر ۱۵ دقیقه یک‌بار به‌صورت کاملاً خودکار بازار را اسکن و معامله می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات فعال شد. لطفاً برای اسکن بازار روی دکمه زیر کلیک کنید:", reply_markup=menu)
         except Exception as e:
             print(f"Telegram polling error: {e}")
             time.sleep(3)
 
 if __name__ == '__main__':
     threading.Thread(target=automated_price_monitor, daemon=True).start()
-    threading.Thread(target=periodic_auto_scanner, daemon=True).start()
     threading.Thread(target=start_telegram_bot, daemon=True).start()
 
     port = int(os.environ.get("PORT", 10000))
