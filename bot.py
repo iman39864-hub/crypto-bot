@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with 15-Min Auto-Scanner Mode!", 200
+    return "Bot is running with Fast-Signal Mode!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -174,7 +174,7 @@ def analyze_and_open_position(symbol):
         return False
 
     df = fetch_historical_candles(symbol, "15m", 100)
-    if df is None or len(df) < 50:
+    if df is None or len(df) < 30:
         return False
 
     df = calculate_indicators(df)
@@ -184,34 +184,26 @@ def analyze_and_open_position(symbol):
     ema20 = last['ema20']
     ema50 = last['ema50']
 
-    df_1h = fetch_historical_candles(symbol, "1h", 50)
-    trend_ok_long = True
-    trend_ok_short = True
-    if df_1h is not None and len(df_1h) > 20:
-        df_1h = calculate_indicators(df_1h)
-        h_last = df_1h.iloc[-1]
-        trend_ok_long = h_last['close'] > h_last['ema50']
-        trend_ok_short = h_last['close'] < h_last['ema50']
-
+    # شرط‌های بسیار منعطف و سریع برای صدور سیگنال مکرر
     signal_type = None
-    if ema20 > ema50 and rsi > 48 and rsi < 72 and trend_ok_long:
+    if ema20 > ema50 and rsi < 75:
         signal_type = 'LONG'
-    elif ema20 < ema50 and rsi < 52 and rsi > 28 and trend_ok_short:
+    elif ema20 < ema50 and rsi > 25:
         signal_type = 'SHORT'
 
     if not signal_type:
         return False
 
     if signal_type == 'LONG':
-        sl = price * 0.985
-        tp1 = price * 1.01
-        tp2 = price * 1.02
-        tp3 = price * 1.035
+        sl = price * 0.99
+        tp1 = price * 1.008
+        tp2 = price * 1.015
+        tp3 = price * 1.025
     else:
-        sl = price * 1.015
-        tp1 = price * 0.99
-        tp2 = price * 0.98
-        tp3 = price * 0.965
+        sl = price * 1.01
+        tp1 = price * 0.992
+        tp2 = price * 0.985
+        tp3 = price * 0.975
 
     open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
     PAPER_BALANCE -= open_fee
@@ -227,7 +219,7 @@ def analyze_and_open_position(symbol):
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
     msg = (
-        f"{icon} سیگنال خودکار (هر ۱۵ دقیقه)\n"
+        f"{icon} سیگنال سریع خودکار\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: {price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
@@ -310,14 +302,15 @@ def periodic_auto_scanner():
     ]
     while True:
         try:
-            time.sleep(900)
-            print("Running scheduled 15-min market scan...")
+            # زمان انتظار کوتاه تر برای بررسی مداوم بازار (هر 3 دقیقه یکبار)
+            time.sleep(180)
+            print("Running scheduled fast market scan...")
             for sym in symbols:
                 analyze_and_open_position(sym)
-                time.sleep(0.5)
+                time.sleep(0.3)
         except Exception as e:
             print(f"Auto scanner error: {e}")
-            time.sleep(60)
+            time.sleep(30)
 
 def automated_price_monitor():
     print("Price monitor background thread started successfully.")
@@ -436,7 +429,7 @@ def start_telegram_bot():
                                 total_pnl = PAPER_BALANCE - INITIAL_BALANCE
 
                                 stats_txt = (
-                                    f"📊 گزارش حساب دمو (اسکن خودکار ۱۵ دقیقه‌ای):\n"
+                                    f"📊 گزارش حساب دمو (حالت سیگنال‌دهی سریع):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل بخش‌های معامله شده: {total_trades}\n"
@@ -450,7 +443,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن خودکار هر ۱۵ دقیقه\n"
+                                    f"• حالت کاری: اسکن سریع (هر ۳ دقیقه)\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
@@ -514,7 +507,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات فعال شد و هر ۱۵ دقیقه به‌صورت خودکار بازار را اسکن و معامله می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات در حالت «سیگنال‌دهی سریع» قرار گرفت و هر ۳ دقیقه بازار را بررسی می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             print(f"Telegram polling error: {e}")
             time.sleep(3)
