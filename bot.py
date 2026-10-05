@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Manual Scan Mode!", 200
+    return "Bot is running with Manual Scan Mode & Expanded Symbols!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -387,7 +387,9 @@ def start_telegram_bot():
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", 
         "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT",
         "LINKUSDT", "LTCUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT",
-        "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT"
+        "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
+        "RENDERUSDT", "FETUSDT", "INJUSDT", "PEPEUSDT", "TIAUSDT", 
+        "SEIUSDT", "SHIBUSDT", "DOGSUSDT"
     ]
     while True:
         try:
@@ -407,15 +409,15 @@ def start_telegram_bot():
                             answer_callback_query(cq['id'], "انجام شد ✓")
 
                             if data_action == 'manual_scan':
-                                send_bale_message(chat_id, "🔍 در حال اسکن بازار برای یافتن فرصت‌های معاملاتی...")
+                                send_bale_message(chat_id, "🔍 در حال اسکن بازار (شامل ارزهای جدید) برای یافتن فرصت‌های معاملاتی...")
                                 opened_count = 0
                                 for sym in symbols_to_scan:
                                     success, msg_res = analyze_and_open_position(sym)
                                     if success:
                                         opened_count += 1
-                                    time.sleep(1)
+                                    time.sleep(0.5)
                                 if opened_count == 0:
-                                    send_bale_message(chat_id, "⚠️ در حال حاضر هیچ سیگنال مناسبی در لیست ارزها یافت نشد.")
+                                    send_bale_message(chat_id, "⚠️ در حال حاضر هیچ سیگنالی در لیست ارزها یافت نشد.")
                             elif data_action == 'active_positions':
                                 if not ACTIVE_POSITIONS:
                                     send_bale_message(chat_id, "📈 در حال حاضر هیچ پوزیشن فعالی وجود ندارد.")
@@ -447,6 +449,7 @@ def start_telegram_bot():
                                 status_msg = (
                                     f"⚙️ وضعیت سیستم ربات:\n"
                                     f"• حالت کاری: کنترل دستی (Manual Scan)\n"
+                                    f"• تعداد ارزهای تحت نظر: {len(symbols_to_scan)} ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
