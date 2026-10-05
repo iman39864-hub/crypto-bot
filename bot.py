@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Forced Test Signal Mode!", 200
+    return "Bot is running with Fast-Signal Market Scanner!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -112,6 +112,24 @@ def get_signal_keyboard(symbol, p_data=None):
         ]
     }
 
+def fetch_historical_candles(symbol, interval="15m", limit=100):
+    url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        response = session.get(url, timeout=10, verify=False)
+        data = response.json()
+        if isinstance(data, list) and len(data) > 0:
+            df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'q_vol', 'trades', 't_buy_base', 't_buy_quote', 'ignore'])
+            df['close'] = df['close'].astype(float)
+            df['high'] = df['high'].astype(float)
+            df['low'] = df['low'].astype(float)
+            df['open'] = df['open'].astype(float)
+            return df
+    except Exception as e:
+        pass
+    return None
+
 def fetch_current_price(symbol):
     url = f"https://api.toobit.com/quote/v1/ticker/price?symbol={symbol}"
     session = requests.Session()
@@ -140,21 +158,51 @@ def fetch_current_price(symbol):
     except Exception as e:
         return None
 
-def open_forced_test_position():
+def calculate_indicators(df):
+    df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
+    df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+    return df
+
+def analyze_and_open_position(symbol):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
-    symbol = "BTCUSDT"
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
-        return
+        return False
 
-    price = fetch_current_price(symbol)
-    if not price:
-        price = 60000.0
+    df = fetch_historical_candles(symbol, "15m", 100)
+    if df is None or len(df) < 30:
+        return False
 
-    signal_type = 'LONG'
-    sl = price * 0.99
-    tp1 = price * 1.008
-    tp2 = price * 1.015
-    tp3 = price * 1.025
+    df = calculate_indicators(df)
+    last = df.iloc[-1]
+    price = last['close']
+    rsi = last['rsi']
+    ema20 = last['ema20']
+    ema50 = last['ema50']
+
+    signal_type = None
+    if ema20 > ema50 and rsi < 75:
+        signal_type = 'LONG'
+    elif ema20 < ema50 and rsi > 25:
+        signal_type = 'SHORT'
+
+    if not signal_type:
+        return False
+
+    if signal_type == 'LONG':
+        sl = price * 0.99
+        tp1 = price * 1.008
+        tp2 = price * 1.015
+        tp3 = price * 1.025
+    else:
+        sl = price * 1.01
+        tp1 = price * 0.992
+        tp2 = price * 0.985
+        tp3 = price * 0.975
 
     open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
     PAPER_BALANCE -= open_fee
@@ -168,8 +216,9 @@ def open_forced_test_position():
     ACTIVE_POSITIONS.append(pos)
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
+    icon = "🚀" if signal_type == 'LONG' else "📉"
     msg = (
-        f"🚀 **سیگنال تست اجباری (برای بررسی سیستم)**\n"
+        f"{icon} سیگنال خودکار بازار\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: {price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
@@ -184,6 +233,8 @@ def open_forced_test_position():
                 pos['msg_id'] = res['result']['message_id']
                 save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
         except: pass
+
+    return True
 
 def calculate_pnl(entry, exit_price, position_type, margin=DEFAULT_MARGIN, leverage=LEVERAGE):
     if position_type == 'LONG':
@@ -240,11 +291,20 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
 
 def periodic_auto_scanner():
     print("Periodic auto-scanner thread started.")
-    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"]
+    symbols = [
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", 
+        "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT",
+        "LINKUSDT", "LTCUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT",
+        "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
+        "RENDERUSDT", "FETUSDT", "INJUSDT", "PEPEUSDT", "TIAUSDT", 
+        "SEIUSDT", "SHIBUSDT", "DOGSUSDT"
+    ]
     while True:
         try:
-            time.sleep(120)
+            time.sleep(180)
+            print("Running scheduled market scan...")
             for sym in symbols:
+                analyze_and_open_position(sym)
                 time.sleep(0.3)
         except Exception as e:
             print(f"Auto scanner error: {e}")
@@ -299,7 +359,6 @@ def automated_price_monitor():
 def start_telegram_bot():
     global ADMIN_CHAT_ID, ACTIVE_POSITIONS, TRADE_HISTORY, PAPER_BALANCE
     offset = 0
-    print("Telegram/Bale bot polling loop started.")
     while True:
         try:
             url = f"{BASE_URL}/getUpdates?offset={offset}&timeout=20"
@@ -338,7 +397,7 @@ def start_telegram_bot():
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل بخش‌های معامله شده: {total_trades}\n"
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
-                                    f"📈 **درصد وین‌‌ریت:** {win_rate:.1f}%\n"
+                                    f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
                                     f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n"
                                     f"──────────────────────"
                                 )
@@ -347,7 +406,8 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: تست اجباری سیگنال\n"
+                                    f"• حالت کاری: اسکن خودکار بازار\n"
+                                    f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
@@ -393,12 +453,10 @@ def start_telegram_bot():
                                 if ADMIN_CHAT_ID is None:
                                     ADMIN_CHAT_ID = chat_id
                                     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                                    threading.Thread(target=open_forced_test_position).start()
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات در حالت «تست اجباری» قرار گرفت.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
-                                    threading.Thread(target=open_forced_test_position).start()
+                                    send_bale_message(chat_id, "🤖 ربات فعال شد و به‌صورت خودکار بازار را اسکن می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
