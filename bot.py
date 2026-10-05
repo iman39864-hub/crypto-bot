@@ -112,24 +112,6 @@ def get_signal_keyboard(symbol, p_data=None):
         ]
     }
 
-def fetch_historical_candles(symbol, interval="15m", limit=100):
-    url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    session = requests.Session()
-    session.trust_env = False
-    try:
-        response = session.get(url, timeout=10, verify=False)
-        data = response.json()
-        if isinstance(data, list) and len(data) > 0:
-            df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'q_vol', 'trades', 't_buy_base', 't_buy_quote', 'ignore'])
-            df['close'] = df['close'].astype(float)
-            df['high'] = df['high'].astype(float)
-            df['low'] = df['low'].astype(float)
-            df['open'] = df['open'].astype(float)
-            return df
-    except Exception as e:
-        pass
-    return None
-
 def fetch_current_price(symbol):
     url = f"https://api.toobit.com/quote/v1/ticker/price?symbol={symbol}"
     session = requests.Session()
@@ -166,7 +148,7 @@ def open_forced_test_position():
 
     price = fetch_current_price(symbol)
     if not price:
-        price = 60000.0  # قیمت پیش‌فرض نمونه در صورت عدم دسترسی آنی
+        price = 60000.0
 
     signal_type = 'LONG'
     sl = price * 0.99
@@ -262,9 +244,7 @@ def periodic_auto_scanner():
     while True:
         try:
             time.sleep(120)
-            print("Running scheduled market scan...")
             for sym in symbols:
-                # شرایط باز کردن پوزیشن معمولی
                 time.sleep(0.3)
         except Exception as e:
             print(f"Auto scanner error: {e}")
@@ -312,9 +292,8 @@ def automated_price_monitor():
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
                         continue
                 except Exception as inner_ex:
-                    print(f"Inner monitor loop error for {p.get('symbol')}: {inner_ex}")
+                    pass
         except Exception as e:
-            print(f"Monitor loop major error: {e}")
             time.sleep(5)
 
 def start_telegram_bot():
@@ -359,7 +338,7 @@ def start_telegram_bot():
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل بخش‌های معامله شده: {total_trades}\n"
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
-                                    f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
+                                    f"📈 **درصد وین‌‌ریت:** {win_rate:.1f}%\n"
                                     f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n"
                                     f"──────────────────────"
                                 )
@@ -397,4 +376,36 @@ def start_telegram_bot():
                                             net_m = pnl_manual - fee_m
                                             PAPER_BALANCE += net_m
                                             TRADE_HISTORY.append({'symbol': sym, 'type': p['type'], 'pnl': net_m})
-                                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID
+                                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                                            edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
+                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود خالص پله اول ({net_m:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
+                                        elif action_type == 'sl':
+                                            p['hit_sl'] = True
+                                            close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
+                                            break
+
+                        elif 'message' in update:
+                            msg = update['message']
+                            if 'text' in msg:
+                                chat_id = msg['chat']['id']
+                                text = msg['text'].strip()
+
+                                if ADMIN_CHAT_ID is None:
+                                    ADMIN_CHAT_ID = chat_id
+                                    save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                                    threading.Thread(target=open_forced_test_position).start()
+
+                                if text == '/start':
+                                    menu = get_main_menu_keyboard()
+                                    send_bale_message(chat_id, "🤖 ربات در حالت «تست اجباری» قرار گرفت.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    threading.Thread(target=open_forced_test_position).start()
+        except Exception as e:
+            time.sleep(3)
+
+if __name__ == '__main__':
+    threading.Thread(target=automated_price_monitor, daemon=True).start()
+    threading.Thread(target=periodic_auto_scanner, daemon=True).start()
+    threading.Thread(target=start_telegram_bot, daemon=True).start()
+
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port, debug=False)
