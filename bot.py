@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Market Scanner!", 200
+    return "Bot is running with Multi-Timeframe Scanner!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -113,7 +113,7 @@ def get_signal_keyboard(symbol, p_data=None):
         ]
     }
 
-def fetch_historical_candles(symbol, interval="15m", limit=100):
+def fetch_historical_candles(symbol, interval="5m", limit=100):
     url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
     session = requests.Session()
     session.trust_env = False
@@ -171,7 +171,8 @@ def analyze_and_open_position(symbol):
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
-    df = fetch_historical_candles(symbol, "15m", 100)
+    # بررسی تایم‌فریم ۵ دقیقه برای سرعت بیشتر در صدور سیگنال
+    df = fetch_historical_candles(symbol, "5m", 100)
     if df is None or len(df) < 30:
         return False
 
@@ -180,26 +181,29 @@ def analyze_and_open_position(symbol):
     price = last['close']
     ema20 = last['ema20']
     ema50 = last['ema50']
+    volume = last['volume']
+    vol_ma20 = last['vol_ma20']
 
     signal_type = None
-    if ema20 > ema50:
+    # شرط ورود پویا: تقاطع EMA همراه با افزایش نسبی حجم معاملات
+    if ema20 > ema50 and (pd.isna(vol_ma20) or volume >= vol_ma20 * 0.8):
         signal_type = 'LONG'
-    elif ema20 < ema50:
+    elif ema20 < ema50 and (pd.isna(vol_ma20) or volume >= vol_ma20 * 0.8):
         signal_type = 'SHORT'
 
     if not signal_type:
         return False
 
     if signal_type == 'LONG':
-        sl = price * 0.99
-        tp1 = price * 1.008
-        tp2 = price * 1.015
-        tp3 = price * 1.025
+        sl = price * 0.992
+        tp1 = price * 1.006
+        tp2 = price * 1.012
+        tp3 = price * 1.020
     else:
-        sl = price * 1.01
-        tp1 = price * 0.992
-        tp2 = price * 0.985
-        tp3 = price * 0.975
+        sl = price * 1.008
+        tp1 = price * 0.994
+        tp2 = price * 0.988
+        tp3 = price * 0.980
 
     open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
     PAPER_BALANCE -= open_fee
@@ -215,7 +219,7 @@ def analyze_and_open_position(symbol):
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
     msg = (
-        f"{icon} سیگنال خودکار بازار\n"
+        f"{icon} سیگنال خودکار (تایم ۵ دقیقه)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: {price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
@@ -300,7 +304,7 @@ def periodic_auto_scanner():
             for sym in symbols:
                 analyze_and_open_position(sym)
                 time.sleep(0.3)
-            time.sleep(60)
+            time.sleep(45)
         except Exception as e:
             time.sleep(30)
 
@@ -399,7 +403,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن خودکار بازار\n"
+                                    f"• حالت کاری: اسکن پویا (تایم ۵ دقیقه)\n"
                                     f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -414,8 +418,8 @@ def start_telegram_bot():
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: {test_price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
-                                    f"🎯 TP1: {test_price * 1.01:.4f} | TP2: {test_price * 1.02:.4f}\n"
-                                    f"🛑 حد ضرر: {test_price * 0.99:.4f}\n"
+                                    f"🎯 TP1: {test_price * 1.006:.4f} | TP2: {test_price * 1.012:.4f}\n"
+                                    f"🛑 حد ضرر: {test_price * 0.992:.4f}\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -424,7 +428,7 @@ def start_telegram_bot():
                                 TRADE_HISTORY = []
                                 PAPER_BALANCE = INITIAL_BALANCE
                                 save_database([], [], ADMIN_CHAT_ID, PAPER_BALANCE)
-                                send_bale_message(chat_id, f"🔄 حساب دمو ریست شد و موجودی به {INITIAL_BALANCE} دلار برگشت.")
+                                send_b_msg = send_bale_message(chat_id, f"🔄 حساب دمو ریست شد و موجودی به {INITIAL_BALANCE} دلار برگشت.")
                             elif data_action.startswith('tp1_') or data_action.startswith('tp2_') or data_action.startswith('tp3_') or data_action.startswith('sl_'):
                                 parts = data_action.split('_')
                                 action_type = parts[0]
@@ -462,7 +466,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات فعال شد و بازار را اسکن می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با اسکنر پویای ۵ دقیقه‌ای فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
