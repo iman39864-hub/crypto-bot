@@ -96,7 +96,8 @@ def get_main_menu_keyboard():
     return {
         "inline_keyboard": [
             [{"text": "📈 پوزیشن‌های فعال", "callback_data": "active_positions"}, {"text": "📊 آمار و وین‌ریت", "callback_data": "stats"}],
-            [{"text": "⚙️ وضعیت سیستم", "callback_data": "bot_status"}, {"text": "🔄 ریست کامل حساب", "callback_data": "reset_stats"}]
+            [{"text": "⚙️ وضعیت سیستم", "callback_data": "bot_status"}, {"text": "🧪 تست سیگنال دستی", "callback_data": "test_signal"}],
+            [{"text": "🔄 ریست کامل حساب", "callback_data": "reset_stats"}]
         ]
     }
 
@@ -180,7 +181,6 @@ def analyze_and_open_position(symbol):
     ema20 = last['ema20']
     ema50 = last['ema50']
 
-    # فیلتر حجم کمی ملایم‌تر شده یا در صورت نیاز می‌توانید خط حجم را کاملاً بردارید
     signal_type = None
     if ema20 > ema50:
         signal_type = 'LONG'
@@ -300,7 +300,7 @@ def periodic_auto_scanner():
             for sym in symbols:
                 analyze_and_open_position(sym)
                 time.sleep(0.3)
-            time.sleep(60) # کاهش زمان انتظار برای بررسی سریع‌تر بازار
+            time.sleep(60)
         except Exception as e:
             time.sleep(30)
 
@@ -406,6 +406,19 @@ def start_telegram_bot():
                                     f"آخرین خطاها:\n{logs_text}"
                                 )
                                 send_bale_message(chat_id, status_msg)
+                            elif data_action == 'test_signal':
+                                test_sym = "BTCUSDT"
+                                test_price = fetch_current_price(test_sym) or 60000.0
+                                test_msg = (
+                                    f"🚀 **تست سیگنال دستی**\n"
+                                    f"──────────────────────\n"
+                                    f"🔹 نماد: {test_sym} (LONG)\n"
+                                    f"💵 قیمت ورود: {test_price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
+                                    f"🎯 TP1: {test_price * 1.01:.4f} | TP2: {test_price * 1.02:.4f}\n"
+                                    f"🛑 حد ضرر: {test_price * 0.99:.4f}\n"
+                                    f"──────────────────────"
+                                )
+                                send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
                             elif data_action == 'reset_stats':
                                 ACTIVE_POSITIONS = []
                                 TRADE_HISTORY = []
