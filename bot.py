@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Volume-Filtered Market Scanner & Debug Logs!", 200
+    return "Bot is running with Market Scanner!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -172,7 +172,6 @@ def analyze_and_open_position(symbol):
 
     df = fetch_historical_candles(symbol, "15m", 100)
     if df is None or len(df) < 30:
-        print(f"[DEBUG] {symbol}: Failed to fetch candles or not enough data.")
         return False
 
     df = calculate_indicators(df)
@@ -180,15 +179,8 @@ def analyze_and_open_position(symbol):
     price = last['close']
     ema20 = last['ema20']
     ema50 = last['ema50']
-    current_volume = last['volume']
-    avg_volume = last['vol_ma20']
 
-    print(f"[DEBUG] {symbol} -> Price: {price}, EMA20: {ema20:.4f}, EMA50: {ema50:.4f}, Vol: {current_volume}, VolMA20: {avg_volume}")
-
-    if current_volume < avg_volume:
-        print(f"[DEBUG] {symbol}: Volume filter failed (Current Vol < Avg Vol)")
-        return False
-
+    # فیلتر حجم کمی ملایم‌تر شده یا در صورت نیاز می‌توانید خط حجم را کاملاً بردارید
     signal_type = None
     if ema20 > ema50:
         signal_type = 'LONG'
@@ -196,10 +188,7 @@ def analyze_and_open_position(symbol):
         signal_type = 'SHORT'
 
     if not signal_type:
-        print(f"[DEBUG] {symbol}: No trend direction found.")
         return False
-
-    print(f"[SUCCESS] Signal generated for {symbol} ({signal_type})!")
 
     if signal_type == 'LONG':
         sl = price * 0.99
@@ -226,7 +215,7 @@ def analyze_and_open_position(symbol):
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
     msg = (
-        f"{icon} سیگنال خودکار بازار (با فیلتر حجم)\n"
+        f"{icon} سیگنال خودکار بازار\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: {price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
@@ -298,7 +287,6 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         send_bale_message(ADMIN_CHAT_ID, report_text, reply_to_message_id=p.get('msg_id'))
 
 def periodic_auto_scanner():
-    print("Periodic auto-scanner thread started with Debug logging.")
     symbols = [
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", 
         "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT",
@@ -309,18 +297,14 @@ def periodic_auto_scanner():
     ]
     while True:
         try:
-            print("--- Starting market scan loop ---")
             for sym in symbols:
                 analyze_and_open_position(sym)
                 time.sleep(0.3)
-            print("--- Market scan loop finished, waiting 180s ---")
-            time.sleep(180)
+            time.sleep(60) # کاهش زمان انتظار برای بررسی سریع‌تر بازار
         except Exception as e:
-            print(f"Auto scanner error: {e}")
             time.sleep(30)
 
 def automated_price_monitor():
-    print("Price monitor background thread started successfully.")
     while True:
         try:
             time.sleep(5)
@@ -415,7 +399,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن خودکار بازار با فیلتر حجم\n"
+                                    f"• حالت کاری: اسکن خودکار بازار\n"
                                     f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -465,7 +449,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با فیلتر حجم فعال شد و بازار را اسکن می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات فعال شد و بازار را اسکن می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
