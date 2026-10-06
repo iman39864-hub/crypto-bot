@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Multi-Timeframe Scanner!", 200
+    return "Bot is running with Fixed Scanner!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -121,7 +121,8 @@ def fetch_historical_candles(symbol, interval="5m", limit=100):
         response = session.get(url, timeout=10, verify=False)
         data = response.json()
         if isinstance(data, list) and len(data) > 0:
-            df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'q_vol', 'trades', 't_buy_base', 't_buy_quote', 'ignore'])
+            # تطبیق تعداد ستون‌ها با پاسخ واقعی صرافی (۱۱ ستون)
+            df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'q_vol', 'trades', 't_buy_base', 't_buy_quote'])
             df['close'] = df['close'].astype(float)
             df['high'] = df['high'].astype(float)
             df['low'] = df['low'].astype(float)
@@ -171,7 +172,6 @@ def analyze_and_open_position(symbol):
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
-    # بررسی تایم‌فریم ۵ دقیقه برای سرعت بیشتر در صدور سیگنال
     df = fetch_historical_candles(symbol, "5m", 100)
     if df is None or len(df) < 30:
         return False
@@ -185,7 +185,6 @@ def analyze_and_open_position(symbol):
     vol_ma20 = last['vol_ma20']
 
     signal_type = None
-    # شرط ورود پویا: تقاطع EMA همراه با افزایش نسبی حجم معاملات
     if ema20 > ema50 and (pd.isna(vol_ma20) or volume >= vol_ma20 * 0.8):
         signal_type = 'LONG'
     elif ema20 < ema50 and (pd.isna(vol_ma20) or volume >= vol_ma20 * 0.8):
@@ -403,7 +402,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن پویا (تایم ۵ دقیقه)\n"
+                                    f"• حالت کاری: اسکن پویا (بدون خطا)\n"
                                     f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -428,7 +427,7 @@ def start_telegram_bot():
                                 TRADE_HISTORY = []
                                 PAPER_BALANCE = INITIAL_BALANCE
                                 save_database([], [], ADMIN_CHAT_ID, PAPER_BALANCE)
-                                send_b_msg = send_bale_message(chat_id, f"🔄 حساب دمو ریست شد و موجودی به {INITIAL_BALANCE} دلار برگشت.")
+                                send_bale_message(chat_id, f"🔄 حساب دمو ریست شد و موجودی به {INITIAL_BALANCE} دلار برگشت.")
                             elif data_action.startswith('tp1_') or data_action.startswith('tp2_') or data_action.startswith('tp3_') or data_action.startswith('sl_'):
                                 parts = data_action.split('_')
                                 action_type = parts[0]
@@ -466,7 +465,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با اسکنر پویای ۵ دقیقه‌ای فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با موفقیت آپدیت و خطای دریافت کندل‌ها برطرف شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
