@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Volume-Filtered Market Scanner!", 200
+    return "Bot is running with Volume-Filtered Market Scanner & Debug Logs!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -128,7 +128,7 @@ def fetch_historical_candles(symbol, interval="15m", limit=100):
             df['volume'] = df['volume'].astype(float)
             return df
     except Exception as e:
-        pass
+        print(f"Fetch candles error for {symbol}: {e}")
     return None
 
 def fetch_current_price(symbol):
@@ -162,7 +162,6 @@ def fetch_current_price(symbol):
 def calculate_indicators(df):
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
-    # محاسبه میانگین حجم ۲۰ دوره اخیر برای فیلتر حجمی
     df['vol_ma20'] = df['volume'].rolling(window=20).mean()
     return df
 
@@ -173,6 +172,7 @@ def analyze_and_open_position(symbol):
 
     df = fetch_historical_candles(symbol, "15m", 100)
     if df is None or len(df) < 30:
+        print(f"[DEBUG] {symbol}: Failed to fetch candles or not enough data.")
         return False
 
     df = calculate_indicators(df)
@@ -183,8 +183,10 @@ def analyze_and_open_position(symbol):
     current_volume = last['volume']
     avg_volume = last['vol_ma20']
 
-    # فیلتر حجمی: حجم کندل فعلی باید بالاتر یا مساوی میانگین حجم باشد
+    print(f"[DEBUG] {symbol} -> Price: {price}, EMA20: {ema20:.4f}, EMA50: {ema50:.4f}, Vol: {current_volume}, VolMA20: {avg_volume}")
+
     if current_volume < avg_volume:
+        print(f"[DEBUG] {symbol}: Volume filter failed (Current Vol < Avg Vol)")
         return False
 
     signal_type = None
@@ -194,7 +196,10 @@ def analyze_and_open_position(symbol):
         signal_type = 'SHORT'
 
     if not signal_type:
+        print(f"[DEBUG] {symbol}: No trend direction found.")
         return False
+
+    print(f"[SUCCESS] Signal generated for {symbol} ({signal_type})!")
 
     if signal_type == 'LONG':
         sl = price * 0.99
@@ -293,7 +298,7 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         send_bale_message(ADMIN_CHAT_ID, report_text, reply_to_message_id=p.get('msg_id'))
 
 def periodic_auto_scanner():
-    print("Periodic auto-scanner thread started.")
+    print("Periodic auto-scanner thread started with Debug logging.")
     symbols = [
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", 
         "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT",
@@ -304,11 +309,12 @@ def periodic_auto_scanner():
     ]
     while True:
         try:
-            time.sleep(180)
-            print("Running scheduled market scan with volume filter...")
+            print("--- Starting market scan loop ---")
             for sym in symbols:
                 analyze_and_open_position(sym)
                 time.sleep(0.3)
+            print("--- Market scan loop finished, waiting 180s ---")
+            time.sleep(180)
         except Exception as e:
             print(f"Auto scanner error: {e}")
             time.sleep(30)
