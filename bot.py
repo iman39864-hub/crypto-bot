@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Clean Signals!", 200
+    return "Bot is running with Smart Decimals & SL!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -217,17 +217,20 @@ def analyze_and_open_position(symbol):
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
-    # ساختار جدید و خط به خط (زیر هم) با دقت بالای اعشار برای ارزهای کوچک
+    # تعیین هوشمند تعداد اعشار بر اساس اندازه قیمت
+    decimals = 8 if price < 1 else 4
+    fmt = f"{{:.{decimals}f}}"
+
     msg = (
         f"{icon} سیگنال خودکار (تایم ۵ دقیقه)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
-        f"💵 قیمت ورود: `{price:.8f}`\n"
+        f"💵 قیمت ورود: `{price:{fmt}}`\n"
         f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-        f"🎯 TP1: `{tp1:.8f}`\n"
-        f"🎯 TP2: `{tp2:.8f}`\n"
-        f"🎯 TP3: `{tp3:.8f}`\n"
-        f"🛑 حد ضرر: `{sl:.8f}`\n"
+        f"🎯 TP1: `{tp1:{fmt}}`\n"
+        f"🎯 TP2: `{tp2:{fmt}}`\n"
+        f"🎯 TP3: `{tp3:{fmt}}`\n"
+        f"🛑 SL: `{sl:{fmt}}`\n"
         f"──────────────────────"
     )
     
@@ -281,12 +284,15 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
 
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
+    decimals = 8 if entry < 1 else 4
+    fmt = f"{{:.{decimals}f}}"
+
     report_text = (
         f"📢 گزارش بسته شدن معامله\n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
-        f"💵 قیمت ورود: `{entry:.8f}`\n"
-        f"🏁 قیمت خروج ({reason}): `{exit_price:.8f}`\n"
+        f"💵 قیمت ورود: `{entry:{fmt}}`\n"
+        f"🏁 قیمت خروج ({reason}): `{exit_price:{fmt}}`\n"
         f"💰 سود / زیان خالص: `{net_pnl:+.2f} $`\n"
         f"💳 موجودی جدید حساب دمو: `{PAPER_BALANCE:.2f} $`\n"
         f"──────────────────────"
@@ -333,7 +339,7 @@ def automated_price_monitor():
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         p['hit_sl'] = True
-                        close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
+                        close_position_completely(p, p['sl'], reason="SL")
                         continue
 
                     hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
@@ -347,7 +353,7 @@ def automated_price_monitor():
                         PAPER_BALANCE += net_part
                         TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
                         save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود خالص پله اول ({net_part:+.2f} $) واریز شد.\n🛡 حد ضرر به نقطه ورود منتقل شد."
+                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود خالص پله اول ({net_part:+.2f} $) واریز شد.\n🛡 SL به نقطه ورود منتقل شد."
                         if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1, reply_to_message_id=p.get('msg_id'))
                         if p.get('msg_id') and ADMIN_CHAT_ID:
                             edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
@@ -383,7 +389,8 @@ def start_telegram_bot():
                                 else:
                                     txt = "📈 پوزیشن‌های فعال دمو:\n"
                                     for p in ACTIVE_POSITIONS:
-                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: `{p['entry']:.8f}` | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
+                                        dec = 8 if p['entry'] < 1 else 4
+                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: `{p['entry']:.{dec}f}` | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
                                     send_bale_message(chat_id, txt)
                             elif data_action == 'stats':
                                 total_trades = len(TRADE_HISTORY)
@@ -407,7 +414,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن پویا (مرتب و دقیق)\n"
+                                    f"• حالت کاری: اسکن هوشمند (اعشار پویا و SL)\n"
                                     f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -417,16 +424,18 @@ def start_telegram_bot():
                             elif data_action == 'test_signal':
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
+                                dec = 8 if test_price < 1 else 4
+                                fmt = f"{{:.{dec}f}}"
                                 test_msg = (
                                     f"🚀 **تست سیگنال دستی**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
-                                    f"💵 قیمت ورود: `{test_price:.4f}`\n"
+                                    f"💵 قیمت ورود: `{test_price:{fmt}}`\n"
                                     f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{test_price * 1.006:.4f}`\n"
-                                    f"🎯 TP2: `{test_price * 1.012:.4f}`\n"
-                                    f"🎯 TP3: `{test_price * 1.020:.4f}`\n"
-                                    f"🛑 حد ضرر: `{test_price * 0.992:.4f}`\n"
+                                    f"🎯 TP1: `{test_price * 1.006:{fmt}}`\n"
+                                    f"🎯 TP2: `{test_price * 1.012:{fmt}}`\n"
+                                    f"🎯 TP3: `{test_price * 1.020:{fmt}}`\n"
+                                    f"🛑 SL: `{test_price * 0.992:{fmt}}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -458,7 +467,7 @@ def start_telegram_bot():
                                             send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود خالص پله اول ({net_m:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
                                         elif action_type == 'sl':
                                             p['hit_sl'] = True
-                                            close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
+                                            close_position_completely(p, p['sl'], reason="SL دستی")
                                             break
 
                         elif 'message' in update:
@@ -473,7 +482,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با ظاهر جدید و قیمت‌های دقیقِ زیر هم فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با اعشار هوشمند و کلیدواژه SL به‌روزرسانی شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
