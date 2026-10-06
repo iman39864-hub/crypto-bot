@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Fast-Signal Market Scanner!", 200
+    return "Bot is running with Volume-Filtered Market Scanner!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -125,6 +125,7 @@ def fetch_historical_candles(symbol, interval="15m", limit=100):
             df['high'] = df['high'].astype(float)
             df['low'] = df['low'].astype(float)
             df['open'] = df['open'].astype(float)
+            df['volume'] = df['volume'].astype(float)
             return df
     except Exception as e:
         pass
@@ -161,11 +162,8 @@ def fetch_current_price(symbol):
 def calculate_indicators(df):
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
+    # محاسبه میانگین حجم ۲۰ دوره اخیر برای فیلتر حجمی
+    df['vol_ma20'] = df['volume'].rolling(window=20).mean()
     return df
 
 def analyze_and_open_position(symbol):
@@ -180,14 +178,19 @@ def analyze_and_open_position(symbol):
     df = calculate_indicators(df)
     last = df.iloc[-1]
     price = last['close']
-    rsi = last['rsi']
     ema20 = last['ema20']
     ema50 = last['ema50']
+    current_volume = last['volume']
+    avg_volume = last['vol_ma20']
+
+    # فیلتر حجمی: حجم کندل فعلی باید بالاتر یا مساوی میانگین حجم باشد
+    if current_volume < avg_volume:
+        return False
 
     signal_type = None
-    if ema20 > ema50 and rsi < 75:
+    if ema20 > ema50:
         signal_type = 'LONG'
-    elif ema20 < ema50 and rsi > 25:
+    elif ema20 < ema50:
         signal_type = 'SHORT'
 
     if not signal_type:
@@ -218,7 +221,7 @@ def analyze_and_open_position(symbol):
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
     msg = (
-        f"{icon} سیگنال خودکار بازار\n"
+        f"{icon} سیگنال خودکار بازار (با فیلتر حجم)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: {price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
@@ -302,7 +305,7 @@ def periodic_auto_scanner():
     while True:
         try:
             time.sleep(180)
-            print("Running scheduled market scan...")
+            print("Running scheduled market scan with volume filter...")
             for sym in symbols:
                 analyze_and_open_position(sym)
                 time.sleep(0.3)
@@ -406,7 +409,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن خودکار بازار\n"
+                                    f"• حالت کاری: اسکن خودکار بازار با فیلتر حجم\n"
                                     f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -456,7 +459,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات فعال شد و به‌صورت خودکار بازار را اسکن می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با فیلتر حجم فعال شد و بازار را اسکن می‌کند.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
