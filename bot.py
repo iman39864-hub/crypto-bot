@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Fixed Scanner!", 200
+    return "Bot is running with Clean Signals!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -121,7 +121,6 @@ def fetch_historical_candles(symbol, interval="5m", limit=100):
         response = session.get(url, timeout=10, verify=False)
         data = response.json()
         if isinstance(data, list) and len(data) > 0:
-            # تطبیق تعداد ستون‌ها با پاسخ واقعی صرافی (۱۱ ستون)
             df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'q_vol', 'trades', 't_buy_base', 't_buy_quote'])
             df['close'] = df['close'].astype(float)
             df['high'] = df['high'].astype(float)
@@ -217,15 +216,21 @@ def analyze_and_open_position(symbol):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
+    
+    # ساختار جدید و خط به خط (زیر هم) با دقت بالای اعشار برای ارزهای کوچک
     msg = (
         f"{icon} سیگنال خودکار (تایم ۵ دقیقه)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
-        f"💵 قیمت ورود: {price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
-        f"🎯 TP1: {tp1:.4f} | TP2: {tp2:.4f} | TP3: {tp3:.4f}\n"
-        f"🛑 حد ضرر: {sl:.4f}\n"
+        f"💵 قیمت ورود: `{price:.8f}`\n"
+        f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
+        f"🎯 TP1: `{tp1:.8f}`\n"
+        f"🎯 TP2: `{tp2:.8f}`\n"
+        f"🎯 TP3: `{tp3:.8f}`\n"
+        f"🛑 حد ضرر: `{sl:.8f}`\n"
         f"──────────────────────"
     )
+    
     if ADMIN_CHAT_ID:
         res = send_bale_message(ADMIN_CHAT_ID, msg, reply_markup=get_signal_keyboard(symbol, pos))
         try:
@@ -280,10 +285,10 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         f"📢 گزارش بسته شدن معامله\n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
-        f"💵 قیمت ورود: {entry:.4f}\n"
-        f"🏁 قیمت خروج ({reason}): {exit_price:.4f}\n"
-        f"💰 سود / زیان خالص: {net_pnl:+.2f} $\n"
-        f"💳 **موجودی جدید حساب دمو:** {PAPER_BALANCE:.2f} $\n"
+        f"💵 قیمت ورود: `{entry:.8f}`\n"
+        f"🏁 قیمت خروج ({reason}): `{exit_price:.8f}`\n"
+        f"💰 سود / زیان خالص: `{net_pnl:+.2f} $`\n"
+        f"💳 موجودی جدید حساب دمو: `{PAPER_BALANCE:.2f} $`\n"
         f"──────────────────────"
     )
     if ADMIN_CHAT_ID:
@@ -378,7 +383,7 @@ def start_telegram_bot():
                                 else:
                                     txt = "📈 پوزیشن‌های فعال دمو:\n"
                                     for p in ACTIVE_POSITIONS:
-                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: {p['entry']} | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
+                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: `{p['entry']:.8f}` | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
                                     send_bale_message(chat_id, txt)
                             elif data_action == 'stats':
                                 total_trades = len(TRADE_HISTORY)
@@ -391,7 +396,7 @@ def start_telegram_bot():
                                     f"📊 گزارش حساب دمو:\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
-                                    f"🎯 کل بخش‌های معامله شده: {total_trades}\n"
+                                    f"🎯 کل معاملات انجام شده: {total_trades}\n"
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
                                     f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
                                     f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n"
@@ -402,7 +407,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن پویا (بدون خطا)\n"
+                                    f"• حالت کاری: اسکن پویا (مرتب و دقیق)\n"
                                     f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -416,9 +421,12 @@ def start_telegram_bot():
                                     f"🚀 **تست سیگنال دستی**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
-                                    f"💵 قیمت ورود: {test_price:.4f} | مارجین: {DEFAULT_MARGIN}$\n"
-                                    f"🎯 TP1: {test_price * 1.006:.4f} | TP2: {test_price * 1.012:.4f}\n"
-                                    f"🛑 حد ضرر: {test_price * 0.992:.4f}\n"
+                                    f"💵 قیمت ورود: `{test_price:.4f}`\n"
+                                    f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
+                                    f"🎯 TP1: `{test_price * 1.006:.4f}`\n"
+                                    f"🎯 TP2: `{test_price * 1.012:.4f}`\n"
+                                    f"🎯 TP3: `{test_price * 1.020:.4f}`\n"
+                                    f"🛑 حد ضرر: `{test_price * 0.992:.4f}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -465,7 +473,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با موفقیت آپدیت و خطای دریافت کندل‌ها برطرف شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با ظاهر جدید و قیمت‌های دقیقِ زیر هم فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
