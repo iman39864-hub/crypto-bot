@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Clean Signals!", 200
+    return "Bot is running with Clean Signals & Better WinRate!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -56,6 +56,14 @@ def save_database(active, history, admin_id, balance):
         print(f"DB Save Error: {e}")
 
 ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE = load_database()
+
+def format_price(price):
+    if price < 1:
+        return f"{price:.4f}"
+    elif price < 10:
+        return f"{price:.4f}"
+    else:
+        return f"{price:.2f}"
 
 def send_bale_message(chat_id, text, reply_markup=None, reply_to_message_id=None):
     if not chat_id:
@@ -164,6 +172,13 @@ def calculate_indicators(df):
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['vol_ma20'] = df['volume'].rolling(window=20).mean()
+    
+    # اضافه کردن فیلتر RSI برای بالا بردن وین‌ریت
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
     return df
 
 def analyze_and_open_position(symbol):
@@ -180,28 +195,25 @@ def analyze_and_open_position(symbol):
     price = last['close']
     ema20 = last['ema20']
     ema50 = last['ema50']
-    volume = last['volume']
-    vol_ma20 = last['vol_ma20']
+    rsi = last['rsi']
 
     signal_type = None
-    if ema20 > ema50 and (pd.isna(vol_ma20) or volume >= vol_ma20 * 0.8):
+    # فیلتر دقیق‌تر برای جلوگیری از سیگنال‌های خطای بازار رِنج
+    if ema20 > ema50 and not pd.isna(rsi) and rsi < 65:
         signal_type = 'LONG'
-    elif ema20 < ema50 and (pd.isna(vol_ma20) or volume >= vol_ma20 * 0.8):
+        sl = price * 0.990
+        tp1 = price * 1.008
+        tp2 = price * 1.016
+        tp3 = price * 1.025
+    elif ema20 < ema50 and not pd.isna(rsi) and rsi > 35:
         signal_type = 'SHORT'
+        sl = price * 1.010
+        tp1 = price * 0.992
+        tp2 = price * 0.984
+        tp3 = price * 0.975
 
     if not signal_type:
         return False
-
-    if signal_type == 'LONG':
-        sl = price * 0.992
-        tp1 = price * 1.006
-        tp2 = price * 1.012
-        tp3 = price * 1.020
-    else:
-        sl = price * 1.008
-        tp1 = price * 0.994
-        tp2 = price * 0.988
-        tp3 = price * 0.980
 
     open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
     PAPER_BALANCE -= open_fee
@@ -218,15 +230,15 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال خودکار (تایم ۵ دقیقه)\n"
+        f"{icon} سیگنال خودکار هوشمند (تایم ۵ دقیقه)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
-        f"💵 قیمت ورود: `{price:.8f}`\n"
+        f"💵 قیمت ورود: `{format_price(price)}`\n"
         f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-        f"🎯 TP1: `{tp1:.8f}`\n"
-        f"🎯 TP2: `{tp2:.8f}`\n"
-        f"🎯 TP3: `{tp3:.8f}`\n"
-        f"🛑 حد ضرر: `{sl:.8f}`\n"
+        f"🎯 TP1: `{format_price(tp1)}`\n"
+        f"🎯 TP2: `{format_price(tp2)}`\n"
+        f"🎯 TP3: `{format_price(tp3)}`\n"
+        f"🛑 حد ضرر: `{format_price(sl)}`\n"
         f"──────────────────────"
     )
     
@@ -284,8 +296,8 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         f"📢 گزارش بسته شدن معامله\n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
-        f"💵 قیمت ورود: `{entry:.8f}`\n"
-        f"🏁 قیمت خروج ({reason}): `{exit_price:.8f}`\n"
+        f"💵 قیمت ورود: `{format_price(entry)}`\n"
+        f"🏁 قیمت خروج ({reason}): `{format_price(exit_price)}`\n"
         f"💰 سود / زیان خالص: `{net_pnl:+.2f} $`\n"
         f"💳 موجودی جدید حساب دمو: `{PAPER_BALANCE:.2f} $`\n"
         f"──────────────────────"
@@ -382,7 +394,7 @@ def start_telegram_bot():
                                 else:
                                     txt = "📈 پوزیشن‌های فعال دمو:\n"
                                     for p in ACTIVE_POSITIONS:
-                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: `{p['entry']:.8f}` | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
+                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: `{format_price(p['entry'])}` | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
                                     send_bale_message(chat_id, txt)
                             elif data_action == 'stats':
                                 total_trades = len(TRADE_HISTORY)
@@ -406,7 +418,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن پویا (مرتب و دقیق)\n"
+                                    f"• حالت کاری: فیلتر هوشمند RSI + تمیزسازی اعشار\n"
                                     f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -420,12 +432,12 @@ def start_telegram_bot():
                                     f"🚀 **تست سیگنال دستی**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
-                                    f"💵 قیمت ورود: `{test_price:.4f}`\n"
+                                    f"💵 قیمت ورود: `{format_price(test_price)}`\n"
                                     f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{test_price * 1.006:.4f}`\n"
-                                    f"🎯 TP2: `{test_price * 1.012:.4f}`\n"
-                                    f"🎯 TP3: `{test_price * 1.020:.4f}`\n"
-                                    f"🛑 حد ضرر: `{test_price * 0.992:.4f}`\n"
+                                    f"🎯 TP1: `{format_price(test_price * 1.008)}`\n"
+                                    f"🎯 TP2: `{format_price(test_price * 1.016)}`\n"
+                                    f"🎯 TP3: `{format_price(test_price * 1.025)}`\n"
+                                    f"🛑 حد ضرر: `{format_price(test_price * 0.990)}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -472,7 +484,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با ظاهر جدید و قیمت‌های دقیقِ زیر هم فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با سیستم فیلتر هوشمند و قیمت‌های تمیز فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
