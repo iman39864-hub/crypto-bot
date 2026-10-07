@@ -55,7 +55,7 @@ def send_bale_message(chat_id, text, reply_markup=None, reply_to_message_id=None
         print("Error: target_chat is empty!")
         return None
     url = f"{BASE_URL}/sendMessage"
-    payload = {'chat_id': target_chat, 'text': text, 'parse_mode': 'Markdown'}
+    payload = {'chat_id': target_chat, 'text': text}
     if reply_markup:
         payload['reply_markup'] = reply_markup
     if reply_to_message_id:
@@ -225,12 +225,12 @@ def analyze_and_open_position(symbol):
         f"{icon} سیگنال هوشمند جدید\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
-        f"💵 قیمت ورود: `{price:{fmt}}`\n"
-        f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-        f"🎯 TP1: `{tp1:{fmt}}`\n"
-        f"🎯 TP2: `{tp2:{fmt}}`\n"
-        f"🎯 TP3: `{tp3:{fmt}}`\n"
-        f"🛑 SL: `{sl:{fmt}}`\n"
+        f"💵 قیمت ورود: {price:{fmt}}\n"
+        f"💰 مارجین: {DEFAULT_MARGIN}$\n"
+        f"🎯 TP1: {tp1:{fmt}}\n"
+        f"🎯 TP2: {tp2:{fmt}}\n"
+        f"🎯 TP3: {tp3:{fmt}}\n"
+        f"🛑 SL: {sl:{fmt}}\n"
         f"──────────────────────"
     )
     
@@ -286,10 +286,10 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
         f"📢 گزارش بسته شدن معامله\n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
-        f"💵 قیمت ورود: `{entry:{fmt}}`\n"
-        f"🏁 قیمت خروج ({reason}): `{exit_price:{fmt}}`\n"
-        f"💰 سود / زیان خالص: `{net_pnl:+.2f} $`\n"
-        f"💳 موجودی جدید حساب دمو: `{PAPER_BALANCE:.2f} $`\n"
+        f"💵 قیمت ورود: {entry:{fmt}}\n"
+        f"🏁 قیمت خروج ({reason}): {exit_price:{fmt}}\n"
+        f"💰 سود / زیان خالص: {net_pnl:+.2f} $\n"
+        f"💳 موجودی جدید حساب دمو: {PAPER_BALANCE:.2f} $\n"
         f"──────────────────────"
     )
     if ADMIN_CHAT_ID:
@@ -436,7 +436,7 @@ def start_telegram_bot():
                                     txt = "📈 پوزیشن‌های فعال دمو:\n"
                                     for p in ACTIVE_POSITIONS:
                                         dec = 8 if p['entry'] < 1 else 4
-                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: `{p['entry']:.{dec}f}` | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
+                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: {p['entry']:.{dec}f} | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
                                     send_bale_message(chat_id, txt)
                             elif data_action == 'stats':
                                 total_trades = len(TRADE_HISTORY)
@@ -451,8 +451,8 @@ def start_telegram_bot():
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل معاملات: {total_trades}\n"
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
-                                    f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
-                                    f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n"
+                                    f"📈 درصد وین‌ریت: {win_rate:.1f}%\n"
+                                    f"💰 سود/زیان خالص: {total_pnl:+.2f} $\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, stats_txt)
@@ -471,15 +471,15 @@ def start_telegram_bot():
                                 dec = 8 if test_price < 1 else 4
                                 fmt = f"{{:.{dec}f}}"
                                 test_msg = (
-                                    f"🚀 **تست سیگنال دستی**\n"
+                                    f"🚀 تست سیگنال دستی\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
-                                    f"💵 قیمت ورود: `{test_price:{fmt}}`\n"
-                                    f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{test_price * 1.012:{fmt}}`\n"
-                                    f"🎯 TP2: `{test_price * 1.025:{fmt}}`\n"
-                                    f"🎯 TP3: `{test_price * 1.040:{fmt}}`\n"
-                                    f"🛑 SL: `{test_price * 0.985:{fmt}}`\n"
+                                    f"💵 قیمت ورود: {test_price:{fmt}}\n"
+                                    f"💰 مارجین: {DEFAULT_MARGIN}$\n"
+                                    f"🎯 TP1: {test_price * 1.012:{fmt}}\n"
+                                    f"🎯 TP2: {test_price * 1.025:{fmt}}\n"
+                                    f"🎯 TP3: {test_price * 1.040:{fmt}}\n"
+                                    f"🛑 SL: {test_price * 0.985:{fmt}}\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
