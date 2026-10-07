@@ -467,21 +467,19 @@ def start_telegram_bot():
                                 send_bale_message(chat_id, status_msg)
                             elif data_action == 'test_signal':
                                 test_sym = "BTCUSDT"
-                                test_price = fetch_current_price(test_sym) or 60000.0
-                                dec = 8 if test_price < 1 else 4
-                                fmt = f"{{:.{dec}f}}"
                                 test_msg = (
-                                    f"🚀 تست سیگنال دستی\n"
-                                    f"──────────────────────\n"
-                                    f"🔹 نماد: {test_sym} (LONG)\n"
-                                    f"💵 قیمت ورود: {test_price:{fmt}}\n"
-                                    f"💰 مارجین: {DEFAULT_MARGIN}$\n"
-                                    f"🎯 TP1: {test_price * 1.012:{fmt}}\n"
-                                    f"🎯 TP2: {test_price * 1.025:{fmt}}\n"
-                                    f"🎯 TP3: {test_price * 1.040:{fmt}}\n"
-                                    f"🛑 SL: {test_price * 0.985:{fmt}}\n"
-                                    f"──────────────────────"
+                                    "🚀 تست سیگنال دستی\n"
+                                    "──────────────────────\n"
+                                    "🔹 نماد: BTCUSDT (LONG)\n"
+                                    "💵 قیمت ورود: 60000\n"
+                                    "💰 مارجین: 15.0$\n"
+                                    "🎯 TP1: 60720\n"
+                                    "🎯 TP2: 61500\n"
+                                    "🎯 TP3: 62400\n"
+                                    "🛑 SL: 59100\n"
+                                    "──────────────────────"
                                 )
+                                print("--> Triggering test_signal manually...")
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
                             elif data_action == 'reset_stats':
                                 ACTIVE_POSITIONS = []
