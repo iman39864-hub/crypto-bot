@@ -32,7 +32,9 @@ def load_database():
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            return data.get('active', []), data.get('history', []), data.get('admin_id', ADMIN_CHAT_ID), data.get('balance', INITIAL_BALANCE)
+            saved_admin = data.get('admin_id')
+            final_admin = saved_admin if saved_admin else ADMIN_CHAT_ID
+            return data.get('active', []), data.get('history', []), final_admin, data.get('balance', INITIAL_BALANCE)
         except Exception as e:
             print(f"DB Load Error: {e}")
     return [], [], ADMIN_CHAT_ID, INITIAL_BALANCE
@@ -50,6 +52,7 @@ ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE = load_database()
 def send_bale_message(chat_id, text, reply_markup=None, reply_to_message_id=None):
     target_chat = chat_id or ADMIN_CHAT_ID
     if not target_chat:
+        print("Error: target_chat is empty!")
         return None
     url = f"{BASE_URL}/sendMessage"
     payload = {'chat_id': target_chat, 'text': text, 'parse_mode': 'Markdown'}
@@ -59,11 +62,11 @@ def send_bale_message(chat_id, text, reply_markup=None, reply_to_message_id=None
         payload['reply_to_message_id'] = reply_to_message_id
     try:
         response = requests.post(url, json=payload, timeout=15, verify=False)
-        print(f"Bale Send Response Code: {response.status_code}, Text: {response.text}")
+        print(f"--> Bale Send Response Code: {response.status_code}, Text: {response.text}")
         if response.status_code == 200:
             return response.json()
     except Exception as e:
-        print(f"Send Message Error: {e}")
+        print(f"--> Send Message Exception: {e}")
     return None
 
 def edit_message_reply_markup(chat_id, message_id, reply_markup):
@@ -231,13 +234,14 @@ def analyze_and_open_position(symbol):
         f"──────────────────────"
     )
     
-    if ADMIN_CHAT_ID:
-        res = send_bale_message(ADMIN_CHAT_ID, msg, reply_markup=get_signal_keyboard(symbol, pos))
-        try:
-            if res and 'result' in res:
-                pos['msg_id'] = res['result']['message_id']
-                save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-        except: pass
+    print(f"Attempting to send signal for {symbol} to chat_id: {ADMIN_CHAT_ID}")
+    res = send_bale_message(ADMIN_CHAT_ID, msg, reply_markup=get_signal_keyboard(symbol, pos))
+    try:
+        if res and 'result' in res:
+            pos['msg_id'] = res['result']['message_id']
+            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+    except Exception as e:
+        print(f"Error saving msg_id: {e}")
 
     return True
 
@@ -304,6 +308,7 @@ def periodic_auto_scanner():
                 time.sleep(1)
             time.sleep(120)
         except Exception as e:
+            print(f"Scanner Error: {e}")
             time.sleep(30)
 
 def automated_price_monitor():
@@ -409,12 +414,20 @@ def start_telegram_bot():
                     for update in data['result']:
                         offset = update['update_id'] + 1
 
+                        if 'message' in update:
+                            msg = update['message']
+                            if 'chat' in msg:
+                                ADMIN_CHAT_ID = msg['chat']['id']
+                                save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+
                         if 'callback_query' in update:
                             cq = update['callback_query']
                             chat_id = cq['message']['chat']['id']
+                            ADMIN_CHAT_ID = chat_id
                             message_id = cq['message']['message_id']
                             data_action = cq['data']
                             answer_callback_query(cq['id'], "انجام شد ✓")
+                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
                             if data_action == 'active_positions':
                                 if not ACTIVE_POSITIONS:
@@ -521,6 +534,7 @@ def start_telegram_bot():
                             msg = update['message']
                             if 'text' in msg:
                                 chat_id = msg['chat']['id']
+                                ADMIN_CHAT_ID = chat_id
                                 text = msg['text'].strip()
 
                                 if text == '/start':
@@ -529,6 +543,7 @@ def start_telegram_bot():
             else:
                 pass
         except Exception as e:
+            print(f"Telegram Polling Error: {e}")
             time.sleep(3)
 
 if __name__ == '__main__':
