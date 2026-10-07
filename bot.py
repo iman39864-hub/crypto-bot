@@ -14,7 +14,6 @@ TOKEN = os.getenv('BALE_BOT_TOKEN', '1918737723:3Unqmbyfho1KwFquFN1QkY9_0v9tT-AM
 BASE_URL = f'https://tapi.bale.ai/bot{TOKEN}'
 DB_FILE = 'positions_db.json'
 
-# آیدی ثابت شما برای ارسال حتمی سیگنال‌ها
 ADMIN_CHAT_ID = 2125586940
 
 DEFAULT_MARGIN = 15.0
@@ -26,7 +25,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running with Fixed Messages & Smart Strategy!", 200
+    return "Bot is running perfectly!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -60,6 +59,7 @@ def send_bale_message(chat_id, text, reply_markup=None, reply_to_message_id=None
         payload['reply_to_message_id'] = reply_to_message_id
     try:
         response = requests.post(url, json=payload, timeout=15, verify=False)
+        print(f"Bale Send Response Code: {response.status_code}, Text: {response.text}")
         if response.status_code == 200:
             return response.json()
     except Exception as e:
