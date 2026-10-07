@@ -14,8 +14,8 @@ TOKEN = os.getenv('BALE_BOT_TOKEN', '1918737723:3Unqmbyfho1KwFquFN1QkY9_0v9tT-AM
 BASE_URL = f'https://tapi.bale.ai/bot{TOKEN}'
 DB_FILE = 'positions_db.json'
 
-# آیدی شما به عنوان ادمین پیش‌فرض ثبت شد تا سیگنال‌ها همیشه ارسال شوند
-ADMIN_CHAT_ID = 2125586940  # جایگزین یا به صورت خودکار از دیتابیس خوانده می‌شود
+# آیدی ثابت شما برای ارسال حتمی سیگنال‌ها
+ADMIN_CHAT_ID = 2125586940
 
 DEFAULT_MARGIN = 15.0
 LEVERAGE = 10
@@ -23,11 +23,10 @@ INITIAL_BALANCE = 100.0
 FEE_RATE = 0.0005
 
 app = Flask(__name__)
-ERROR_LOGS = []
 
 @app.route('/')
 def home():
-    return "Bot is running with Smart Strategy & Fixed Admin!", 200
+    return "Bot is running with Fixed Messages & Smart Strategy!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -108,7 +107,6 @@ def get_signal_keyboard(symbol, p_data=None):
     }
 
 def fetch_historical_candles(symbol, interval="15m", limit=100):
-    # تغییر تایم‌فریم به ۱۵ دقیقه برای کاهش نویز و فیک‌اسپایک‌ها
     url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
     session = requests.Session()
     session.trust_env = False
@@ -159,7 +157,6 @@ def calculate_indicators(df):
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['vol_ma20'] = df['volume'].rolling(window=20).mean()
-    # محاسبه RSI برای فیلتر کردن خریدهای هیجانی
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -186,7 +183,6 @@ def analyze_and_open_position(symbol):
     rsi = last['rsi']
 
     signal_type = None
-    # سخت‌گیرانه‌تر کردن شرط ورود با RSI و حجم بالا برای وین‌ریت بهتر
     if ema20 > ema50 and rsi < 70 and (not pd.isna(vol_ma20) and volume >= vol_ma20 * 1.2):
         signal_type = 'LONG'
     elif ema20 < ema50 and rsi > 30 and (not pd.isna(vol_ma20) and volume >= vol_ma20 * 1.2):
@@ -195,7 +191,6 @@ def analyze_and_open_position(symbol):
     if not signal_type:
         return False
 
-    # تنظیم فاصله مطمئن‌تر برای حد ضرر و اهداف سود
     if signal_type == 'LONG':
         sl = price * 0.985
         tp1 = price * 1.012
@@ -224,7 +219,7 @@ def analyze_and_open_position(symbol):
     fmt = f"{{:.{decimals}f}}"
 
     msg = (
-        f"{icon} سیگنال هوشمند (تایم ۱۵ دقیقه)\n"
+        f"{icon} سیگنال هوشمند جدید\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{price:{fmt}}`\n"
