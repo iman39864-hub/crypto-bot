@@ -10,7 +10,8 @@ from flask import Flask, request, jsonify
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-TOKEN = os.getenv('BALE_BOT_TOKEN', '1918737723:3Unqmbyfho1KwFquFN1QkY9_0v9tT-AMdmg')
+# توکن اختصاصی ربات @iman398_bot
+TOKEN = os.getenv('BALE_BOT_TOKEN', '123456789:iman398_bot_token_placeholder')
 BASE_URL = f'https://tapi.bale.ai/bot{TOKEN}'
 DB_FILE = 'positions_db.json'
 
@@ -538,7 +539,7 @@ def start_telegram_bot():
                                             p['hit_tp1'] = True
                                             p['hit_tp2'] = True
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            close_position_completely(p, p['tp3'], reason="TP3 دستی")
+                                            close_position_comp7letely(p, p['tp3'], reason="TP3 دستی")
                                             break
                                         elif action_type == 'sl':
                                             close_position_completely(p, p['sl'], reason="SL دستی")
