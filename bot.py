@@ -14,7 +14,8 @@ TOKEN = os.getenv('BALE_BOT_TOKEN', '1918737723:3Unqmbyfho1KwFquFN1QkY9_0v9tT-AM
 BASE_URL = f'https://tapi.bale.ai/bot{TOKEN}'
 DB_FILE = 'positions_db.json'
 
-ADMIN_CHAT_ID = None
+# آیدی شما به عنوان ادمین پیش‌فرض ثبت شد تا سیگنال‌ها همیشه ارسال شوند
+ADMIN_CHAT_ID = 2125586940  # جایگزین یا به صورت خودکار از دیتابیس خوانده می‌شود
 
 DEFAULT_MARGIN = 15.0
 LEVERAGE = 10
@@ -24,28 +25,19 @@ FEE_RATE = 0.0005
 app = Flask(__name__)
 ERROR_LOGS = []
 
-def log_error_to_bale(error_msg):
-    global ERROR_LOGS
-    print(f"[ERROR] {error_msg}")
-    ERROR_LOGS.append(error_msg)
-    if len(ERROR_LOGS) > 20:
-        ERROR_LOGS.pop(0)
-    if ADMIN_CHAT_ID:
-        send_bale_message(ADMIN_CHAT_ID, f"⚠️ **خطای سیستمی در ربات:**\n`{error_msg}`")
-
 @app.route('/')
 def home():
-    return "Bot is running with Smart Decimals & SL!", 200
+    return "Bot is running with Smart Strategy & Fixed Admin!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            return data.get('active', []), data.get('history', []), data.get('admin_id', None), data.get('balance', INITIAL_BALANCE)
+            return data.get('active', []), data.get('history', []), data.get('admin_id', ADMIN_CHAT_ID), data.get('balance', INITIAL_BALANCE)
         except Exception as e:
             print(f"DB Load Error: {e}")
-    return [], [], None, INITIAL_BALANCE
+    return [], [], ADMIN_CHAT_ID, INITIAL_BALANCE
 
 def save_database(active, history, admin_id, balance):
     try:
@@ -58,10 +50,11 @@ def save_database(active, history, admin_id, balance):
 ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE = load_database()
 
 def send_bale_message(chat_id, text, reply_markup=None, reply_to_message_id=None):
-    if not chat_id:
+    target_chat = chat_id or ADMIN_CHAT_ID
+    if not target_chat:
         return None
     url = f"{BASE_URL}/sendMessage"
-    payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}
+    payload = {'chat_id': target_chat, 'text': text, 'parse_mode': 'Markdown'}
     if reply_markup:
         payload['reply_markup'] = reply_markup
     if reply_to_message_id:
@@ -75,10 +68,11 @@ def send_bale_message(chat_id, text, reply_markup=None, reply_to_message_id=None
     return None
 
 def edit_message_reply_markup(chat_id, message_id, reply_markup):
-    if not chat_id or not message_id:
+    target_chat = chat_id or ADMIN_CHAT_ID
+    if not target_chat or not message_id:
         return
     url = f"{BASE_URL}/editMessageReplyMarkup"
-    payload = {'chat_id': chat_id, 'message_id': message_id, 'reply_markup': reply_markup}
+    payload = {'chat_id': target_chat, 'message_id': message_id, 'reply_markup': reply_markup}
     try:
         requests.post(url, json=payload, timeout=10, verify=False)
     except Exception as e:
@@ -113,7 +107,8 @@ def get_signal_keyboard(symbol, p_data=None):
         ]
     }
 
-def fetch_historical_candles(symbol, interval="5m", limit=100):
+def fetch_historical_candles(symbol, interval="15m", limit=100):
+    # تغییر تایم‌فریم به ۱۵ دقیقه برای کاهش نویز و فیک‌اسپایک‌ها
     url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
     session = requests.Session()
     session.trust_env = False
@@ -164,6 +159,12 @@ def calculate_indicators(df):
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['vol_ma20'] = df['volume'].rolling(window=20).mean()
+    # محاسبه RSI برای فیلتر کردن خریدهای هیجانی
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
     return df
 
 def analyze_and_open_position(symbol):
@@ -171,8 +172,8 @@ def analyze_and_open_position(symbol):
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
-    df = fetch_historical_candles(symbol, "5m", 100)
-    if df is None or len(df) < 30:
+    df = fetch_historical_candles(symbol, "15m", 100)
+    if df is None or len(df) < 40:
         return False
 
     df = calculate_indicators(df)
@@ -182,26 +183,29 @@ def analyze_and_open_position(symbol):
     ema50 = last['ema50']
     volume = last['volume']
     vol_ma20 = last['vol_ma20']
+    rsi = last['rsi']
 
     signal_type = None
-    if ema20 > ema50 and (pd.isna(vol_ma20) or volume >= vol_ma20 * 0.8):
+    # سخت‌گیرانه‌تر کردن شرط ورود با RSI و حجم بالا برای وین‌ریت بهتر
+    if ema20 > ema50 and rsi < 70 and (not pd.isna(vol_ma20) and volume >= vol_ma20 * 1.2):
         signal_type = 'LONG'
-    elif ema20 < ema50 and (pd.isna(vol_ma20) or volume >= vol_ma20 * 0.8):
+    elif ema20 < ema50 and rsi > 30 and (not pd.isna(vol_ma20) and volume >= vol_ma20 * 1.2):
         signal_type = 'SHORT'
 
     if not signal_type:
         return False
 
+    # تنظیم فاصله مطمئن‌تر برای حد ضرر و اهداف سود
     if signal_type == 'LONG':
-        sl = price * 0.992
-        tp1 = price * 1.006
-        tp2 = price * 1.012
-        tp3 = price * 1.020
+        sl = price * 0.985
+        tp1 = price * 1.012
+        tp2 = price * 1.025
+        tp3 = price * 1.040
     else:
-        sl = price * 1.008
-        tp1 = price * 0.994
-        tp2 = price * 0.988
-        tp3 = price * 0.980
+        sl = price * 1.015
+        tp1 = price * 0.988
+        tp2 = price * 0.975
+        tp3 = price * 0.960
 
     open_fee = (DEFAULT_MARGIN * LEVERAGE) * FEE_RATE
     PAPER_BALANCE -= open_fee
@@ -220,7 +224,7 @@ def analyze_and_open_position(symbol):
     fmt = f"{{:.{decimals}f}}"
 
     msg = (
-        f"{icon} سیگنال خودکار (تایم ۵ دقیقه)\n"
+        f"{icon} سیگنال هوشمند (تایم ۱۵ دقیقه)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{price:{fmt}}`\n"
@@ -295,18 +299,15 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
 def periodic_auto_scanner():
     symbols = [
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", 
-        "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT",
-        "LINKUSDT", "LTCUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT",
-        "APTUSDT", "FTMUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
-        "RENDERUSDT", "FETUSDT", "INJUSDT", "PEPEUSDT", "TIAUSDT", 
-        "SEIUSDT", "SHIBUSDT", "DOGSUSDT"
+        "ADAUSDT", "AVAXUSDT", "DOGEUSDT", "DOTUSDT", "LINKUSDT",
+        "LTCUSDT", "NEARUSDT", "ATOMUSDT", "UNIUSDT", "APTUSDT"
     ]
     while True:
         try:
             for sym in symbols:
                 analyze_and_open_position(sym)
-                time.sleep(0.3)
-            time.sleep(45)
+                time.sleep(1)
+            time.sleep(120)
         except Exception as e:
             time.sleep(30)
 
@@ -328,13 +329,11 @@ def automated_price_monitor():
                     if 'hit_tp3' not in p: p['hit_tp3'] = False
                     if 'hit_sl' not in p: p['hit_sl'] = False
 
-                    # بررسی حد ضرر
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         close_position_completely(p, p['sl'], reason="SL")
                         continue
 
-                    # بررسی TP1
                     hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
                     if hit_tp1_cond and not p.get('hit_tp1', False):
                         p['hit_tp1'] = True
@@ -354,7 +353,6 @@ def automated_price_monitor():
                         if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1, reply_to_message_id=p.get('msg_id'))
                         continue
 
-                    # بررسی TP2
                     hit_tp2_cond = (p_type == 'LONG' and curr >= p['tp2']) or (p_type == 'SHORT' and curr <= p['tp2'])
                     if hit_tp2_cond and not p.get('hit_tp2', False):
                         p['hit_tp2'] = True
@@ -372,7 +370,6 @@ def automated_price_monitor():
                         if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp2, reply_to_message_id=p.get('msg_id'))
                         continue
 
-                    # بررسی TP3 (بسته‌شدن کامل معامله)
                     hit_tp3_cond = (p_type == 'LONG' and curr >= p['tp3']) or (p_type == 'SHORT' and curr <= p['tp3'])
                     if hit_tp3_cond and not p.get('hit_tp3', False):
                         p['hit_tp3'] = True
@@ -454,8 +451,8 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: اسکن هوشمند با آپدیت دکمه‌ها\n"
-                                    f"• تعداد ارزها: 28 ارز\n"
+                                    f"• حالت کاری: استراتژی هوشمند فیلتر‌شده (RSI + Volume)\n"
+                                    f"• تایم‌فریم: ۱۵ دقیقه\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x"
                                 )
@@ -471,10 +468,10 @@ def start_telegram_bot():
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{test_price:{fmt}}`\n"
                                     f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{test_price * 1.006:{fmt}}`\n"
-                                    f"🎯 TP2: `{test_price * 1.012:{fmt}}`\n"
-                                    f"🎯 TP3: `{test_price * 1.020:{fmt}}`\n"
-                                    f"🛑 SL: `{test_price * 0.992:{fmt}}`\n"
+                                    f"🎯 TP1: `{test_price * 1.012:{fmt}}`\n"
+                                    f"🎯 TP2: `{test_price * 1.025:{fmt}}`\n"
+                                    f"🎯 TP3: `{test_price * 1.040:{fmt}}`\n"
+                                    f"🛑 SL: `{test_price * 0.985:{fmt}}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -510,7 +507,7 @@ def start_telegram_bot():
                                             fee_m = (margin * LEVERAGE * 0.3) * FEE_RATE
                                             net_m = pnl_manual - fee_m
                                             PAPER_BALANCE += net_m
-                                            TRADE_HISTORY.append({'symbol': sym, 'type': p['type'], 'pnl': net_m})
+                                            TRADE_HISTORY.append({'symbol': sym, 'type': sym, 'pnl': net_m})
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
                                             send_bale_message(chat_id, f"✅ TP2 برای {sym} ثبت و سود پله دوم ({net_m:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
@@ -530,10 +527,6 @@ def start_telegram_bot():
                             if 'text' in msg:
                                 chat_id = msg['chat']['id']
                                 text = msg['text'].strip()
-
-                                if ADMIN_CHAT_ID is None:
-                                    ADMIN_CHAT_ID = chat_id
-                                    save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
