@@ -35,7 +35,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Clean Signals & Better WinRate!", 200
+    return "Bot is running with Fixed Pricing and Improved WinRate!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -58,8 +58,12 @@ def save_database(active, history, admin_id, balance):
 ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE = load_database()
 
 def format_price(price):
-    if price < 1:
-        return f"{price:.4f}"
+    if price is None:
+        return "0.00"
+    if price < 0.0001:
+        return f"{price:.8f}"
+    elif price < 1:
+        return f"{price:.6f}"
     elif price < 10:
         return f"{price:.4f}"
     else:
@@ -173,7 +177,6 @@ def calculate_indicators(df):
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['vol_ma20'] = df['volume'].rolling(window=20).mean()
     
-    # اضافه کردن فیلتر RSI برای بالا بردن وین‌ریت
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -198,19 +201,19 @@ def analyze_and_open_position(symbol):
     rsi = last['rsi']
 
     signal_type = None
-    # فیلتر دقیق‌تر برای جلوگیری از سیگنال‌های خطای بازار رِنج
-    if ema20 > ema50 and not pd.isna(rsi) and rsi < 65:
+    # بهبود فیلترها برای افزایش وین‌ریت و جلوگیری از سیگنال‌های خطای بازار خنثی
+    if ema20 > ema50 and not pd.isna(rsi) and 45 < rsi < 68:
         signal_type = 'LONG'
-        sl = price * 0.990
-        tp1 = price * 1.008
-        tp2 = price * 1.016
-        tp3 = price * 1.025
-    elif ema20 < ema50 and not pd.isna(rsi) and rsi > 35:
+        sl = price * 0.985
+        tp1 = price * 1.010
+        tp2 = price * 1.020
+        tp3 = price * 1.035
+    elif ema20 < ema50 and not pd.isna(rsi) and 32 < rsi < 55:
         signal_type = 'SHORT'
-        sl = price * 1.010
-        tp1 = price * 0.992
-        tp2 = price * 0.984
-        tp3 = price * 0.975
+        sl = price * 1.015
+        tp1 = price * 0.990
+        tp2 = price * 0.980
+        tp3 = price * 0.965
 
     if not signal_type:
         return False
@@ -418,7 +421,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: فیلتر هوشمند RSI + تمیزسازی اعشار\n"
+                                    f"• حالت کاری: فیلتر بهبودیافته RSI و قیمت‌های دقیق اعشاری\n"
                                     f"• تعداد ارزهای تحت نظر: 28 ارز\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -434,10 +437,10 @@ def start_telegram_bot():
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
                                     f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{format_price(test_price * 1.008)}`\n"
-                                    f"🎯 TP2: `{format_price(test_price * 1.016)}`\n"
-                                    f"🎯 TP3: `{format_price(test_price * 1.025)}`\n"
-                                    f"🛑 حد ضرر: `{format_price(test_price * 0.990)}`\n"
+                                    f"🎯 TP1: `{format_price(test_price * 1.010)}`\n"
+                                    f"🎯 TP2: `{format_price(test_price * 1.020)}`\n"
+                                    f"🎯 TP3: `{format_price(test_price * 1.035)}`\n"
+                                    f"🛑 حد ضرر: `{format_price(test_price * 0.985)}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -484,7 +487,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با سیستم فیلتر هوشمند و قیمت‌های تمیز فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با رفع مشکل نمایش صفرِ قیمت‌های اعشاری و بهبود فیلتر سیگنال‌ها آماده است.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
