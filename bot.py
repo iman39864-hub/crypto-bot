@@ -20,6 +20,7 @@ DEFAULT_MARGIN = 15.0
 LEVERAGE = 10
 INITIAL_BALANCE = 100.0
 FEE_RATE = 0.0005
+MAX_ACTIVE_POSITIONS = 3  # محدود کردن پوزیشن‌های هم‌زمان برای کاهش ریسک
 
 app = Flask(__name__)
 ERROR_LOGS = []
@@ -35,7 +36,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with High WinRate Strategy & Fixed Pricing!", 200
+    return "Bot is running with ATR Strategy & Smart Risk Management!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -182,10 +183,33 @@ def calculate_indicators(df):
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['rsi'] = 100 - (100 / (1 + rs))
+    
+    high_low = df['high'] - df['low']
+    high_close = np.abs(df['high'] - df['close'].shift())
+    low_close = np.abs(df['low'] - df['close'].shift())
+    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['atr'] = true_range.rolling(window=14).mean()
+    
     return df
+
+def get_market_trend():
+    df_btc = fetch_historical_candles("BTCUSDT", "15m", 50)
+    if df_btc is not None and len(df_btc) > 30:
+        df_btc['ema20'] = df_btc['close'].ewm(span=20, adjust=False).mean()
+        df_btc['ema50'] = df_btc['close'].ewm(span=50, adjust=False).mean()
+        last = df_btc.iloc[-1]
+        if last['ema20'] > last['ema50']:
+            return 'BULLISH'
+        elif last['ema20'] < last['ema50']:
+            return 'BEARISH'
+    return 'NEUTRAL'
 
 def analyze_and_open_position(symbol):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
+    
+    if len(ACTIVE_POSITIONS) >= MAX_ACTIVE_POSITIONS:
+        return False
+        
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
@@ -199,26 +223,30 @@ def analyze_and_open_position(symbol):
     ema20 = last['ema20']
     ema50 = last['ema50']
     rsi = last['rsi']
+    atr = last['atr']
     volume = last['volume']
     vol_ma20 = last['vol_ma20']
 
+    if pd.isna(atr) or atr <= 0:
+        return False
+
+    market_trend = get_market_trend()
     signal_type = None
     
-    # فیلتر سخت‌گیرانه برای بالا بردن وین‌ریت (نیاز به حجم بالا + تایید روند واقعی)
-    is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.2)
+    is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.1)
 
-    if ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 50 < rsi < 70:
+    if market_trend != 'BEARISH' and ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 45 < rsi < 68:
         signal_type = 'LONG'
-        sl = price * 0.975  # حد ضرر ایمن‌تر (2.5 درصد فاصله)
-        tp1 = price * 1.015
-        tp2 = price * 1.030
-        tp3 = price * 1.050
-    elif ema20 < ema50 and is_high_volume and not pd.isna(rsi) and 30 < rsi < 50:
+        sl = price - (1.5 * atr)
+        tp1 = price + (1.2 * atr)
+        tp2 = price + (2.4 * atr)
+        tp3 = price + (3.8 * atr)
+    elif market_trend != 'BULLISH' and ema20 < ema50 and is_high_volume and not pd.isna(rsi) and 32 < rsi < 55:
         signal_type = 'SHORT'
-        sl = price * 1.025  # حد ضرر ایمن‌تر (2.5 درصد فاصله)
-        tp1 = price * 0.985
-        tp2 = price * 0.970
-        tp3 = price * 0.950
+        sl = price + (1.5 * atr)
+        tp1 = price - (1.2 * atr)
+        tp2 = price - (2.4 * atr)
+        tp3 = price - (3.8 * atr)
 
     if not signal_type:
         return False
@@ -238,7 +266,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال خودکار هوشمند (تایم ۵ دقیقه)\n"
+        f"{icon} سیگنال هوشمند ATR (تایم ۵ دقیقه)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -246,7 +274,7 @@ def analyze_and_open_position(symbol):
         f"🎯 TP1: `{format_price(tp1)}`\n"
         f"🎯 TP2: `{format_price(tp2)}`\n"
         f"🎯 TP3: `{format_price(tp3)}`\n"
-        f"🛑 حد ضرر: `{format_price(sl)}`\n"
+        f"🛑 حد ضرر ATR: `{format_price(sl)}`\n"
         f"──────────────────────"
     )
     
@@ -325,9 +353,11 @@ def periodic_auto_scanner():
     while True:
         try:
             for sym in symbols:
+                if len(ACTIVE_POSITIONS) >= MAX_ACTIVE_POSITIONS:
+                    break
                 analyze_and_open_position(sym)
-                time.sleep(0.3)
-            time.sleep(60) # افزایش زمان بررسی برای دقت بیشتر
+                time.sleep(0.5)
+            time.sleep(60)
         except Exception as e:
             time.sleep(30)
 
@@ -352,7 +382,7 @@ def automated_price_monitor():
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         p['hit_sl'] = True
-                        close_position_completely(p, p['sl'], reason="حد ضرر (SL)")
+                        close_position_completely(p, p['sl'], reason="حد ضرر ATR (SL)")
                         continue
 
                     hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
@@ -426,8 +456,8 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: فیلتر حجم بالا + حد ضرر استاندارد ۲.۵ درصدی\n"
-                                    f"• تعداد ارزهای تحت نظر: 28 ارز\n"
+                                    f"• حالت کاری: سیستم هوشمند ATR + فیلتر روند بازار\n"
+                                    f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
@@ -437,15 +467,15 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال دستی**\n"
+                                    f"🚀 **تست سیگنال دستی ATR**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
                                     f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{format_price(test_price * 1.015)}`\n"
-                                    f"🎯 TP2: `{format_price(test_price * 1.030)}`\n"
-                                    f"🎯 TP3: `{format_price(test_price * 1.050)}`\n"
-                                    f"🛑 حد ضرر: `{format_price(test_price * 0.975)}`\n"
+                                    f"🎯 TP1: `{format_price(test_price * 1.01)}`\n"
+                                    f"🎯 TP2: `{format_price(test_price * 1.02)}`\n"
+                                    f"🎯 TP3: `{format_price(test_price * 1.03)}`\n"
+                                    f"🛑 حد ضرر: `{format_price(test_price * 0.99)}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -492,7 +522,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با استراتژی جدیدِ فیلتر حجم و حد ضرر استاندارد فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با استراتژی جدید ATR و مدیریت ریسک به روز شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
