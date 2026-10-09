@@ -20,7 +20,7 @@ DEFAULT_MARGIN = 15.0
 LEVERAGE = 10
 INITIAL_BALANCE = 100.0
 FEE_RATE = 0.0005
-MAX_ACTIVE_POSITIONS = 3  # محدود کردن پوزیشن‌های هم‌زمان برای کاهش ریسک
+MAX_ACTIVE_POSITIONS = 3
 
 app = Flask(__name__)
 ERROR_LOGS = []
@@ -193,7 +193,6 @@ def calculate_indicators(df):
     return df
 
 def get_higher_timeframe_trend(symbol):
-    # بررسی تایم‌فریم ۱۵ دقیقه برای تاییدیه روند اصلی (جلوگیری از سیگنال‌های فیک ۵ دقیقه)
     df_15m = fetch_historical_candles(symbol, "15m", 50)
     if df_15m is not None and len(df_15m) > 30:
         df_15m['ema20'] = df_15m['close'].ewm(span=20, adjust=False).mean()
@@ -236,7 +235,6 @@ def analyze_and_open_position(symbol):
     
     is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.15)
 
-    # هم‌راستا کردن سیگنال ۵ دقیقه با روند ۱۵ دقیقه برای اعتبار بالا
     if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 50 < rsi < 68:
         signal_type = 'LONG'
         sl = price - (1.5 * atr)
@@ -381,11 +379,10 @@ def automated_price_monitor():
                     if 'hit_tp3' not in p: p['hit_tp3'] = False
                     if 'hit_sl' not in p: p['hit_sl'] = False
 
-                    # تریلینگ استاپ پویا: اگر قیمت به سمت سود حرکت کند، حد ضرر جابجا می شود
                     if p_type == 'LONG':
                         if curr >= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
-                            p['sl'] = entry  # ریسک فری
+                            p['sl'] = entry
                             p['risk_free'] = True
                             pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
@@ -396,8 +393,8 @@ def automated_price_monitor():
                             if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL به نقطه ورود منتقل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr >= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
-                            p['sl'] = p['tp1']  # قفل کردن سود TP1 به عنوان حد ضرر جدید
-                    else: # SHORT
+                            p['sl'] = p['tp1']
+                    else:
                         if curr <= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
                             p['sl'] = entry
@@ -489,10 +486,10 @@ def start_telegram_bot():
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
                                     f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{format_price(test_price * 1.01)`\n"
-                                    f"🎯 TP2: `{format_price(test_price * 1.02)`\n"
-                                    f"🎯 TP3: `{format_price(test_price * 1.03)`\n"
-                                    f"🛑 حد ضرر: `{format_price(test_price * 0.99)`\n"
+                                    f"🎯 TP1: `{format_price(test_price * 1.01)}`\n"
+                                    f"🎯 TP2: `{format_price(test_price * 1.02)}`\n"
+                                    f"🎯 TP3: `{format_price(test_price * 1.03)}`\n"
+                                    f"🛑 حد ضرر: `{format_price(test_price * 0.99)}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -543,7 +540,7 @@ def start_telegram_bot():
         except Exception as e:
             time.sleep(3)
 
-if __name__ == 'main__':
+if __name__ == '__main__':
     threading.Thread(target=automated_price_monitor, daemon=True).start()
     threading.Thread(target=periodic_auto_scanner, daemon=True).start()
     threading.Thread(target=start_telegram_bot, daemon=True).start()
