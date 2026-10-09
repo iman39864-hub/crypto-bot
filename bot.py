@@ -36,7 +36,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with ATR Strategy & Smart Risk Management!", 200
+    return "Bot is running with Multi-Timeframe & Trailing ATR Strategy!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -192,12 +192,13 @@ def calculate_indicators(df):
     
     return df
 
-def get_market_trend():
-    df_btc = fetch_historical_candles("BTCUSDT", "15m", 50)
-    if df_btc is not None and len(df_btc) > 30:
-        df_btc['ema20'] = df_btc['close'].ewm(span=20, adjust=False).mean()
-        df_btc['ema50'] = df_btc['close'].ewm(span=50, adjust=False).mean()
-        last = df_btc.iloc[-1]
+def get_higher_timeframe_trend(symbol):
+    # بررسی تایم‌فریم ۱۵ دقیقه برای تاییدیه روند اصلی (جلوگیری از سیگنال‌های فیک ۵ دقیقه)
+    df_15m = fetch_historical_candles(symbol, "15m", 50)
+    if df_15m is not None and len(df_15m) > 30:
+        df_15m['ema20'] = df_15m['close'].ewm(span=20, adjust=False).mean()
+        df_15m['ema50'] = df_15m['close'].ewm(span=50, adjust=False).mean()
+        last = df_15m.iloc[-1]
         if last['ema20'] > last['ema50']:
             return 'BULLISH'
         elif last['ema20'] < last['ema50']:
@@ -230,18 +231,19 @@ def analyze_and_open_position(symbol):
     if pd.isna(atr) or atr <= 0:
         return False
 
-    market_trend = get_market_trend()
+    trend_15m = get_higher_timeframe_trend(symbol)
     signal_type = None
     
-    is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.1)
+    is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.15)
 
-    if market_trend != 'BEARISH' and ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 45 < rsi < 68:
+    # هم‌راستا کردن سیگنال ۵ دقیقه با روند ۱۵ دقیقه برای اعتبار بالا
+    if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 50 < rsi < 68:
         signal_type = 'LONG'
         sl = price - (1.5 * atr)
         tp1 = price + (1.2 * atr)
         tp2 = price + (2.4 * atr)
         tp3 = price + (3.8 * atr)
-    elif market_trend != 'BULLISH' and ema20 < ema50 and is_high_volume and not pd.isna(rsi) and 32 < rsi < 55:
+    elif trend_15m == 'BEARISH' and ema20 < ema50 and is_high_volume and not pd.isna(rsi) and 32 < rsi < 50:
         signal_type = 'SHORT'
         sl = price + (1.5 * atr)
         tp1 = price - (1.2 * atr)
@@ -266,7 +268,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال هوشمند ATR (تایم ۵ دقیقه)\n"
+        f"{icon} سیگنال حرفه‌ای Multi-TF & ATR\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -274,7 +276,7 @@ def analyze_and_open_position(symbol):
         f"🎯 TP1: `{format_price(tp1)}`\n"
         f"🎯 TP2: `{format_price(tp2)}`\n"
         f"🎯 TP3: `{format_price(tp3)}`\n"
-        f"🛑 حد ضرر ATR: `{format_price(sl)}`\n"
+        f"🛑 حد ضرر: `{format_price(sl)}`\n"
         f"──────────────────────"
     )
     
@@ -379,27 +381,42 @@ def automated_price_monitor():
                     if 'hit_tp3' not in p: p['hit_tp3'] = False
                     if 'hit_sl' not in p: p['hit_sl'] = False
 
+                    # تریلینگ استاپ پویا: اگر قیمت به سمت سود حرکت کند، حد ضرر جابجا می شود
+                    if p_type == 'LONG':
+                        if curr >= p['tp1'] and not p.get('hit_tp1', False):
+                            p['hit_tp1'] = True
+                            p['sl'] = entry  # ریسک فری
+                            p['risk_free'] = True
+                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
+                            fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
+                            net_part = pnl_part - fee_part
+                            PAPER_BALANCE += net_part
+                            TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
+                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL به نقطه ورود منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                        elif curr >= p['tp2'] and not p.get('hit_tp2', False):
+                            p['hit_tp2'] = True
+                            p['sl'] = p['tp1']  # قفل کردن سود TP1 به عنوان حد ضرر جدید
+                    else: # SHORT
+                        if curr <= p['tp1'] and not p.get('hit_tp1', False):
+                            p['hit_tp1'] = True
+                            p['sl'] = entry
+                            p['risk_free'] = True
+                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
+                            fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
+                            net_part = pnl_part - fee_part
+                            PAPER_BALANCE += net_part
+                            TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
+                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL به نقطه ورود منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                        elif curr <= p['tp2'] and not p.get('hit_tp2', False):
+                            p['hit_tp2'] = True
+                            p['sl'] = p['tp1']
+
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         p['hit_sl'] = True
-                        close_position_completely(p, p['sl'], reason="حد ضرر ATR (SL)")
-                        continue
-
-                    hit_tp1_cond = (p_type == 'LONG' and curr >= p['tp1']) or (p_type == 'SHORT' and curr <= p['tp1'])
-                    if hit_tp1_cond and not p.get('hit_tp1', False):
-                        p['hit_tp1'] = True
-                        p['sl'] = entry
-                        p['risk_free'] = True
-                        pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
-                        fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
-                        net_part = pnl_part - fee_part
-                        PAPER_BALANCE += net_part
-                        TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
-                        save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                        msg_tp1 = f"🎯 هدف اول (TP1) برای {p['symbol']} لمس شد!\n💰 سود خالص پله اول ({net_part:+.2f} $) واریز شد.\n🛡 حد ضرر به نقطه ورود منتقل شد."
-                        if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, msg_tp1, reply_to_message_id=p.get('msg_id'))
-                        if p.get('msg_id') and ADMIN_CHAT_ID:
-                            edit_message_reply_markup(ADMIN_CHAT_ID, p['msg_id'], get_signal_keyboard(p['symbol'], p))
+                        close_position_completely(p, p['sl'], reason="حد ضرر تریلینگ (SL)")
                         continue
                 except Exception as inner_ex:
                     pass
@@ -456,7 +473,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: سیستم هوشمند ATR + فیلتر روند بازار\n"
+                                    f"• حالت کاری: سیستم پیشرفته Multi-TF و تریلینگ استاپ\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -467,15 +484,15 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال دستی ATR**\n"
+                                    f"🚀 **تست سیگنال پیشرفته**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
                                     f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{format_price(test_price * 1.01)}`\n"
-                                    f"🎯 TP2: `{format_price(test_price * 1.02)}`\n"
-                                    f"🎯 TP3: `{format_price(test_price * 1.03)}`\n"
-                                    f"🛑 حد ضرر: `{format_price(test_price * 0.99)}`\n"
+                                    f"🎯 TP1: `{format_price(test_price * 1.01)`\n"
+                                    f"🎯 TP2: `{format_price(test_price * 1.02)`\n"
+                                    f"🎯 TP3: `{format_price(test_price * 1.03)`\n"
+                                    f"🛑 حد ضرر: `{format_price(test_price * 0.99)`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -522,11 +539,11 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با استراتژی جدید ATR و مدیریت ریسک به روز شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با سیستم Multi-TF و تریلینگ استاپ فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
-if __name__ == '__main__':
+if __name__ == 'main__':
     threading.Thread(target=automated_price_monitor, daemon=True).start()
     threading.Thread(target=periodic_auto_scanner, daemon=True).start()
     threading.Thread(target=start_telegram_bot, daemon=True).start()
