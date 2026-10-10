@@ -36,7 +36,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Multi-Timeframe & Trailing ATR Strategy!", 200
+    return "Bot is running with Risk-Free & Fee-Covered TP1 Strategy!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -266,7 +266,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال حرفه‌ای Multi-TF & ATR\n"
+        f"{icon} سیگنال حرفه‌ای (محافظت کارمزد در TP1)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -382,7 +382,8 @@ def automated_price_monitor():
                     if p_type == 'LONG':
                         if curr >= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
-                            p['sl'] = entry
+                            # انتقال SL به نقطه ورود به علاوه پوشش کارمزدها (جلوگیری از زیان)
+                            p['sl'] = entry + (entry * 0.001) 
                             p['risk_free'] = True
                             pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
@@ -390,14 +391,15 @@ def automated_price_monitor():
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL به نقطه ورود منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: 
+                                send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 برای {p['symbol']} لمس شد!\n💰 سود پله اول واریز و SL به بالای نقطه ورود (ریسک‌فریِ امن همراه با سود) منتقل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr >= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['sl'] = p['tp1']
                     else:
                         if curr <= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
-                            p['sl'] = entry
+                            p['sl'] = entry - (entry * 0.001)
                             p['risk_free'] = True
                             pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
@@ -405,7 +407,8 @@ def automated_price_monitor():
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL به نقطه ورود منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: 
+                                send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 برای {p['symbol']} لمس شد!\n💰 سود پله اول واریز و SL به بالای نقطه ورود (ریسک‌فریِ امن همراه با سود) منتقل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr <= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['sl'] = p['tp1']
@@ -413,7 +416,7 @@ def automated_price_monitor():
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         p['hit_sl'] = True
-                        close_position_completely(p, p['sl'], reason="حد ضرر تریلینگ (SL)")
+                        close_position_completely(p, p['sl'], reason="حد ضرر محافظت‌شده (SL)")
                         continue
                 except Exception as inner_ex:
                     pass
@@ -470,7 +473,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: سیستم پیشرفته Multi-TF و تریلینگ استاپ\n"
+                                    f"• حالت کاری: ریسک‌فری هوشمند با پوشش کارمزد در TP1\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -509,7 +512,7 @@ def start_telegram_bot():
                                         margin = p.get('margin', DEFAULT_MARGIN)
                                         if action_type == 'tp1':
                                             p['hit_tp1'] = True
-                                            p['sl'] = p['entry']
+                                            p['sl'] = p['entry'] + (p['entry'] * 0.001 if p['type'] == 'LONG' else -p['entry'] * 0.001)
                                             p['risk_free'] = True
                                             pnl_manual = calculate_pnl(p['entry'], p['tp1'], p['type'], margin, LEVERAGE) * 0.4
                                             fee_m = (margin * LEVERAGE * 0.4) * FEE_RATE
@@ -536,7 +539,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با سیستم Multi-TF و تریلینگ استاپ فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با سیستم ریسک‌فری و پوشش کارمزد فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
