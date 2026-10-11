@@ -36,7 +36,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Optimized Risk/Reward Ratio Strategy!", 200
+    return "Bot is running with Dynamic Trailing Stop Strategy!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -235,7 +235,6 @@ def analyze_and_open_position(symbol):
     
     is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.15)
 
-    # اصلاح نسبت ریسک به ریوارد (افزایش فاصله‌ی اهداف سود)
     if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 50 < rsi < 68:
         signal_type = 'LONG'
         sl = price - (1.5 * atr)
@@ -267,7 +266,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال بهینه‌شده (سود به ریسک بالا)\n"
+        f"{icon} سیگنال با تریلینگ استاپ پویا\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -381,24 +380,18 @@ def automated_price_monitor():
                     if 'hit_sl' not in p: p['hit_sl'] = False
 
                     if p_type == 'LONG':
-                        if curr >= p['tp1'] and not p.get('hit_tp1', False):
-                            p['hit_tp1'] = True
-                            p['sl'] = entry + (entry * 0.001)
-                            p['risk_free'] = True
-                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
-                            fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
-                            net_part = pnl_part - fee_part
-                            PAPER_BALANCE += net_part
-                            TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
-                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL امن شد.", reply_to_message_id=p.get('msg_id'))
+                        # تریلینگ استاپ پیشرفته و پویا
+                        if curr >= p['tp3'] and not p.get('hit_tp3', False):
+                            close_position_completely(p, curr, reason="هدف نهایی TP3 (سود کامل)")
+                            continue
                         elif curr >= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
-                            p['sl'] = p['tp1']
-                    else:
-                        if curr <= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
-                            p['sl'] = entry - (entry * 0.001)
+                            p['sl'] = p['tp1'] # قفل کردن سود TP1 به عنوان حد ضرر جدید
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! حد ضرر به سطح TP1 منتقل شد تا سود قطعی قفل شود.", reply_to_message_id=p.get('msg_id'))
+                        elif curr >= p['tp1'] and not p.get('hit_tp1', False):
+                            p['hit_tp1'] = True
+                            p['sl'] = entry + (entry * 0.001) # ریسک فری امن
                             p['risk_free'] = True
                             pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
@@ -406,15 +399,32 @@ def automated_price_monitor():
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL امن شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL به بالای نقطه ورود منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                    else: # SHORT
+                        if curr <= p['tp3'] and not p.get('hit_tp3', False):
+                            close_position_completely(p, curr, reason="هدف نهایی TP3 (سود کامل)")
+                            continue
                         elif curr <= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
-                            p['sl'] = p['tp1']
+                            p['hit_tp1'] = True
+                            p['sl'] = p['tp1'] # قفل کردن سود TP1 به عنوان حد ضرر جدید
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! حد ضرر به سطح TP1 منتقل شد تا سود قطعی قفل شود.", reply_to_message_id=p.get('msg_id'))
+                        elif curr <= p['tp1'] and not p.get('hit_tp1', False):
+                            p['hit_tp1'] = True
+                            p['sl'] = entry - (entry * 0.001) # ریسک فری امن
+                            p['risk_free'] = True
+                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
+                            fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
+                            net_part = pnl_part - fee_part
+                            PAPER_BALANCE += net_part
+                            TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
+                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL به بالای نقطه ورود منتقل شد.", reply_to_message_id=p.get('msg_id'))
 
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
                         p['hit_sl'] = True
-                        close_position_completely(p, p['sl'], reason="حد ضرر محافظت‌شده (SL)")
+                        close_position_completely(p, p['sl'], reason="خروج با تریلینگ استاپ (SL/Locked)")
                         continue
                 except Exception as inner_ex:
                     pass
@@ -471,7 +481,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: ریسک به ریوارد بهینه شده (TPهای بزرگ‌تر)\n"
+                                    f"• حالت کاری: تریلینگ استاپ پویا (حرکت SL به دنبال TPها)\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -482,7 +492,7 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال بهینه‌شده**\n"
+                                    f"🚀 **تست سیگنال تریلینگ**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -537,7 +547,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با اهداف سود بهینه‌شده فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با سیستم تریلینگ استاپ پویا فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
