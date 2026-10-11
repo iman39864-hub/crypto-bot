@@ -36,7 +36,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Risk-Free & Fee-Covered TP1 Strategy!", 200
+    return "Bot is running with Optimized Risk/Reward Ratio Strategy!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -235,18 +235,19 @@ def analyze_and_open_position(symbol):
     
     is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.15)
 
+    # اصلاح نسبت ریسک به ریوارد (افزایش فاصله‌ی اهداف سود)
     if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 50 < rsi < 68:
         signal_type = 'LONG'
         sl = price - (1.5 * atr)
-        tp1 = price + (1.2 * atr)
-        tp2 = price + (2.4 * atr)
-        tp3 = price + (3.8 * atr)
+        tp1 = price + (1.5 * atr)
+        tp2 = price + (3.0 * atr)
+        tp3 = price + (4.8 * atr)
     elif trend_15m == 'BEARISH' and ema20 < ema50 and is_high_volume and not pd.isna(rsi) and 32 < rsi < 50:
         signal_type = 'SHORT'
         sl = price + (1.5 * atr)
-        tp1 = price - (1.2 * atr)
-        tp2 = price - (2.4 * atr)
-        tp3 = price - (3.8 * atr)
+        tp1 = price - (1.5 * atr)
+        tp2 = price - (3.0 * atr)
+        tp3 = price - (4.8 * atr)
 
     if not signal_type:
         return False
@@ -266,7 +267,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال حرفه‌ای (محافظت کارمزد در TP1)\n"
+        f"{icon} سیگنال بهینه‌شده (سود به ریسک بالا)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -382,8 +383,7 @@ def automated_price_monitor():
                     if p_type == 'LONG':
                         if curr >= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
-                            # انتقال SL به نقطه ورود به علاوه پوشش کارمزدها (جلوگیری از زیان)
-                            p['sl'] = entry + (entry * 0.001) 
+                            p['sl'] = entry + (entry * 0.001)
                             p['risk_free'] = True
                             pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
@@ -391,8 +391,7 @@ def automated_price_monitor():
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: 
-                                send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 برای {p['symbol']} لمس شد!\n💰 سود پله اول واریز و SL به بالای نقطه ورود (ریسک‌فریِ امن همراه با سود) منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL امن شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr >= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['sl'] = p['tp1']
@@ -407,8 +406,7 @@ def automated_price_monitor():
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({'symbol': p['symbol'], 'type': p_type, 'pnl': net_part})
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: 
-                                send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 برای {p['symbol']} لمس شد!\n💰 سود پله اول واریز و SL به بالای نقطه ورود (ریسک‌فریِ امن همراه با سود) منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد و سود پله اول واریز گشت. SL امن شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr <= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['sl'] = p['tp1']
@@ -473,7 +471,7 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: ریسک‌فری هوشمند با پوشش کارمزد در TP1\n"
+                                    f"• حالت کاری: ریسک به ریوارد بهینه شده (TPهای بزرگ‌تر)\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                     f"• مانیتورینگ قیمت: فعال\n"
                                     f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
@@ -484,15 +482,15 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال پیشرفته**\n"
+                                    f"🚀 **تست سیگنال بهینه‌شده**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
                                     f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1: `{format_price(test_price * 1.01)}`\n"
-                                    f"🎯 TP2: `{format_price(test_price * 1.02)}`\n"
-                                    f"🎯 TP3: `{format_price(test_price * 1.03)}`\n"
-                                    f"🛑 حد ضرر: `{format_price(test_price * 0.99)}`\n"
+                                    f"🎯 TP1: `{format_price(test_price * 1.015)}`\n"
+                                    f"🎯 TP2: `{format_price(test_price * 1.03)}`\n"
+                                    f"🎯 TP3: `{format_price(test_price * 1.045)}`\n"
+                                    f"🛑 حد ضرر: `{format_price(test_price * 0.985)}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -539,7 +537,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با سیستم ریسک‌فری و پوشش کارمزد فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با اهداف سود بهینه‌شده فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
