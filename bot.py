@@ -36,7 +36,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Optimized Multi-Step TP Strategy!", 200
+    return "Bot is running with Technical ATR-based TP/SL & Strict Strategy!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -240,16 +240,17 @@ def analyze_and_open_position(symbol):
 
     if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and has_good_momentum and not pd.isna(rsi) and 55 < rsi < 65:
         signal_type = 'LONG'
+        # محاسبه اصولی و تکنیکال بر اساس ATR (نوسان واقعی بازار)
         sl = price - (1.5 * atr)
-        tp1 = price + (1.5 * atr)
-        tp2 = price + (3.0 * atr)
-        tp3 = price + (4.8 * atr)
+        tp1 = price + (1.2 * atr)  # تعدیل ضریب TP1 برای دسترسی منطقی‌تر و موفقیت بیشتر در رسیدن به اهداف
+        tp2 = price + (2.4 * atr)
+        tp3 = price + (3.8 * atr)
     elif trend_15m == 'BEARISH' and ema20 < ema50 and is_high_volume and has_good_momentum and not pd.isna(rsi) and 35 < rsi < 45:
         signal_type = 'SHORT'
         sl = price + (1.5 * atr)
-        tp1 = price - (1.5 * atr)
-        tp2 = price - (3.0 * atr)
-        tp3 = price - (4.8 * atr)
+        tp1 = price - (1.2 * atr)
+        tp2 = price - (2.4 * atr)
+        tp3 = price - (3.8 * atr)
 
     if not signal_type:
         return False
@@ -269,14 +270,14 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال پله‌ای بهینه (سود بالا)\n"
+        f"{icon} سیگنال تکنیکال (محاسبه ATR)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
         f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-        f"🎯 TP1 (30% حجم): `{format_price(tp1)}`\n"
-        f"🎯 TP2 (40% حجم): `{format_price(tp2)}`\n"
-        f"🎯 TP3 (30% حجم): `{format_price(tp3)}`\n"
+        f"🎯 TP1 (30%): `{format_price(tp1)}`\n"
+        f"🎯 TP2 (40%): `{format_price(tp2)}`\n"
+        f"🎯 TP3 (30%): `{format_price(tp3)}`\n"
         f"🛑 حد ضرر: `{format_price(sl)}`\n"
         f"──────────────────────"
     )
@@ -399,7 +400,7 @@ def automated_price_monitor():
                         elif curr >= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
-                            p['sl'] = p['tp1'] # قفل کردن حد ضرر روی TP1 برای حفظ سود پله‌های قبلی
+                            p['sl'] = p['tp1']
                             pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
                             net_part = pnl_part - fee_part
@@ -409,12 +410,12 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': True, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد و سود واریز گشت. SL به TP1 منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد. SL به TP1 منتقل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr >= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
-                            p['sl'] = entry + (entry * 0.001) # ریسک فری امن
+                            p['sl'] = entry + (entry * 0.001)
                             p['risk_free'] = True
-                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.3 # ۳۰ درصد حجم در TP1
+                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.3
                             fee_part = (margin * LEVERAGE * 0.3) * FEE_RATE
                             net_part = pnl_part - fee_part
                             PAPER_BALANCE += net_part
@@ -444,7 +445,7 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': True, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد و سود واریز گشت. SL به TP1 منتقل شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد. SL به TP1 منتقل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr <= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
                             p['sl'] = entry - (entry * 0.001)
@@ -517,7 +518,7 @@ def start_telegram_bot():
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
                                     f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
                                     f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n\n"
-                                    f"📌 **آمار تفکیکی اهداف سود:**\n"
+                                    f"📌 **آمار تفکیکی اهداف سود تکنیکال:**\n"
                                     f"• تعداد برخورد به TP1 (30%): `{tp1_count}` بار\n"
                                     f"• تعداد برخورد به TP2 (40%): `{tp2_count}` بار\n"
                                     f"• تعداد برخورد به TP3 (30% نهایی): `{tp3_count}` بار\n"
@@ -528,10 +529,9 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• حالت کاری: خروج پله‌ای بهینه (30% - 40% - 30%)\n"
-                                    f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
-                                    f"• مانیتورینگ قیمت: فعال\n"
-                                    f"• تنظیمات مارجین: {DEFAULT_MARGIN}$ | اهرم: {LEVERAGE}x\n\n"
+                                    f"• محاسبه TP و SL: کاملاً تکنیکال بر اساس اندیکاتور ATR\n"
+                                    f"• مدیریت حجم: پله‌ای (30% - 40% - 30%)\n"
+                                    f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
                                 )
                                 send_bale_message(chat_id, status_msg)
@@ -539,7 +539,7 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال پله‌ای**\n"
+                                    f"🚀 **تست سیگنال ATR**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -597,7 +597,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با ساختار جدید خروج پله‌ای (30-40-30) فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با محاسبه کاملاً تکنیکال ATR برای TP/SL فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
