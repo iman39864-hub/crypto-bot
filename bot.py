@@ -6,6 +6,7 @@ import json
 import os
 import pandas as pd
 import numpy as np
+from datetime import datetime
 from flask import Flask, request, jsonify
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -36,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with Technical ATR-based TP/SL & Strict Strategy!", 200
+    return "Bot is running with Advanced Multi-Filter & Trend Protection Strategy!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -192,17 +193,23 @@ def calculate_indicators(df):
     
     return df
 
-def get_higher_timeframe_trend(symbol):
-    df_15m = fetch_historical_candles(symbol, "15m", 50)
-    if df_15m is not None and len(df_15m) > 30:
+def get_market_trend_and_higher_atr(symbol):
+    df_15m = fetch_historical_candles(symbol, "15m", 100)
+    if df_15m is not None and len(df_15m) > 50:
         df_15m['ema20'] = df_15m['close'].ewm(span=20, adjust=False).mean()
         df_15m['ema50'] = df_15m['close'].ewm(span=50, adjust=False).mean()
+        df_15m['ema200'] = df_15m['close'].ewm(span=200, adjust=False).mean() if len(df_15m) >= 200 else df_15m['ema50']
+        
+        high_low = df_15m['high'] - df_15m['low']
+        high_close = np.abs(df_15m['high'] - df_15m['close'].shift())
+        low_close = np.abs(df_15m['low'] - df_15m['close'].shift())
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        df_15m['atr15'] = true_range.rolling(window=14).mean()
+
         last = df_15m.iloc[-1]
-        if last['ema20'] > last['ema50']:
-            return 'BULLISH'
-        elif last['ema20'] < last['ema50']:
-            return 'BEARISH'
-    return 'NEUTRAL'
+        trend = 'BULLISH' if last['ema20'] > last['ema50'] and last['close'] > last['ema200'] else ('BEARISH' if last['ema20'] < last['ema50'] and last['close'] < last['ema200'] else 'NEUTRAL')
+        return trend, last.get('atr15', 0)
+    return 'NEUTRAL', 0
 
 def analyze_and_open_position(symbol):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
@@ -230,7 +237,9 @@ def analyze_and_open_position(symbol):
     if pd.isna(atr) or atr <= 0:
         return False
 
-    trend_15m = get_higher_timeframe_trend(symbol)
+    trend_15m, atr_15m = get_market_trend_and_higher_atr(symbol)
+    effective_atr = atr_15m if not pd.isna(atr_15m) and atr_15m > 0 else atr
+
     signal_type = None
     
     is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.35)
@@ -240,17 +249,16 @@ def analyze_and_open_position(symbol):
 
     if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and has_good_momentum and not pd.isna(rsi) and 55 < rsi < 65:
         signal_type = 'LONG'
-        # محاسبه اصولی و تکنیکال بر اساس ATR (نوسان واقعی بازار)
-        sl = price - (1.5 * atr)
-        tp1 = price + (1.2 * atr)  # تعدیل ضریب TP1 برای دسترسی منطقی‌تر و موفقیت بیشتر در رسیدن به اهداف
-        tp2 = price + (2.4 * atr)
-        tp3 = price + (3.8 * atr)
+        sl = price - (1.5 * effective_atr)
+        tp1 = price + (1.2 * effective_atr)
+        tp2 = price + (2.4 * effective_atr)
+        tp3 = price + (3.8 * effective_atr)
     elif trend_15m == 'BEARISH' and ema20 < ema50 and is_high_volume and has_good_momentum and not pd.isna(rsi) and 35 < rsi < 45:
         signal_type = 'SHORT'
-        sl = price + (1.5 * atr)
-        tp1 = price - (1.2 * atr)
-        tp2 = price - (2.4 * atr)
-        tp3 = price - (3.8 * atr)
+        sl = price + (1.5 * effective_atr)
+        tp1 = price - (1.2 * effective_atr)
+        tp2 = price - (2.4 * effective_atr)
+        tp3 = price - (3.8 * effective_atr)
 
     if not signal_type:
         return False
@@ -270,7 +278,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال تکنیکال (محاسبه ATR)\n"
+        f"{icon} سیگنال پیشرفته (فیلتر روند + ATR دینامیک)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -518,7 +526,7 @@ def start_telegram_bot():
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
                                     f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
                                     f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n\n"
-                                    f"📌 **آمار تفکیکی اهداف سود تکنیکال:**\n"
+                                    f"📌 **آمار تفکیکی اهداف پیشرفته:**\n"
                                     f"• تعداد برخورد به TP1 (30%): `{tp1_count}` بار\n"
                                     f"• تعداد برخورد به TP2 (40%): `{tp2_count}` بار\n"
                                     f"• تعداد برخورد به TP3 (30% نهایی): `{tp3_count}` بار\n"
@@ -529,8 +537,9 @@ def start_telegram_bot():
                                 logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• محاسبه TP و SL: کاملاً تکنیکال بر اساس اندیکاتور ATR\n"
-                                    f"• مدیریت حجم: پله‌ای (30% - 40% - 30%)\n"
+                                    f"• فیلتر روند کلی بازار (EMA 200 + Trend): فعال\n"
+                                    f"• ATR دینامیک (تایم‌فریم بالاتر): فعال\n"
+                                    f"• فیلتر ساعات معاملاتی و نقدینگی: فعال\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n\n"
                                     f"آخرین خطاها:\n{logs_text}"
                                 )
@@ -539,7 +548,7 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال ATR**\n"
+                                    f"🚀 **تست سیگنال پیشرفته**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -597,7 +606,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با محاسبه کاملاً تکنیکال ATR برای TP/SL فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با سیستم فیلتر پیشرفته روند و ATR دینامیک فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
