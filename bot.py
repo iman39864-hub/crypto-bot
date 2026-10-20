@@ -128,32 +128,22 @@ def get_signal_keyboard(symbol, p_data=None):
     }
 
 def fetch_market_internals(symbol):
-    """
-    دریافت دیتای فاندینگ ریت و Open Interest برای سنجش سنتیمنت واقعی صرافی
-    """
     session = requests.Session()
     session.trust_env = False
     funding_rate = 0.0
     oi_change_pct = 0.0
-    
     try:
-        # ۱. دریافت نرخ فاندینگ (Funding Rate)
         fr_url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}"
         res_fr = session.get(fr_url, timeout=5, verify=False)
         if res_fr.status_code == 200:
             data = res_fr.json()
             funding_rate = float(data.get('lastFundingRate', 0.0))
-            
-        # ۲. دریافت تغییرات Open Interest
         oi_url = f"https://fapi.binance.com/fapi/v1/openInterest?symbol={symbol}"
         res_oi = session.get(oi_url, timeout=5, verify=False)
         if res_oi.status_code == 200:
-            data_oi = res_oi.json()
-            open_interest = float(data_oi.get('openInterest', 0.0))
-            oi_change_pct = 1.0 # پیش‌فرض تایید اولیه
+            oi_change_pct = 1.0
     except Exception as e:
         print(f"Error fetching market internals for {symbol}: {e}")
-        
     return funding_rate, oi_change_pct
 
 def fetch_historical_candles(symbol, interval="5m", limit=100):
@@ -211,7 +201,6 @@ def analyze_and_open_position(symbol):
     
     if len(ACTIVE_POSITIONS) >= MAX_ACTIVE_POSITIONS:
         return False
-        
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
@@ -231,21 +220,16 @@ def analyze_and_open_position(symbol):
     if pd.isna(atr) or atr <= 0:
         return False
 
-    # دریافت داده‌های ارتقایافته‌ی صرافی (Market Internals)
     funding_rate, oi_change_pct = fetch_market_internals(symbol)
-
     signal_type = None
     is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.3)
 
-    # 🎯 شرط لانگ حرفه‌ای: روند تکنیکال + فاندینگ ریت منفی (یعنی بازار شورت است و ریسک لیکویید شدن شورت‌ها بالاست)
     if ema20 > ema50 and is_high_volume and funding_rate <= 0.0001:
         signal_type = 'LONG'
         sl = price - (1.5 * atr)
         tp1 = price + (1.0 * atr)
         tp2 = price + (1.8 * atr)
         tp3 = price + (2.6 * atr)
-        
-    # 🎯 شرط شورت حرفه‌ای: روند تکنیکال + فاندینگ ریت مثبت بالا (توده‌ی خرد لانگ هستند و پول هوشمند شورت می‌کند)
     elif ema20 < ema50 and is_high_volume and funding_rate >= -0.0001:
         signal_type = 'SHORT'
         sl = price + (1.5 * atr)
@@ -443,15 +427,92 @@ def start_telegram_bot():
                         if 'callback_query' in update:
                             cq = update['callback_query']
                             chat_id = cq['message']['chat']['id']
+                            message_id = cq['message']['message_id']
                             data_action = cq['data']
-                            answer_callback_query(cq['id'], "انجام شد")
+                            answer_callback_query(cq['id'], "انجام شد ✓")
 
-                            if data_action == 'reset_stats':
+                            if data_action == 'active_positions':
+                                if not ACTIVE_POSITIONS:
+                                    send_bale_message(chat_id, "📈 در حال حاضر هیچ پوزیشن فعالی وجود ندارد.")
+                                else:
+                                    txt = "📈 پوزیشن‌های فعال دمو:\n"
+                                    for p in ACTIVE_POSITIONS:
+                                        txt += f"- {p['symbol']} ({p['type']}) | ورود: `{format_price(p['entry'])}` | مارجین: {p.get('margin', DEFAULT_MARGIN)}$\n"
+                                    send_bale_message(chat_id, txt)
+                            elif data_action == 'stats':
+                                total_trades = len(TRADE_HISTORY)
+                                wins = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) > 0])
+                                losses = len([t for t in TRADE_HISTORY if t.get('pnl', 0.0) <= 0])
+                                win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
+                                total_pnl = PAPER_BALANCE - INITIAL_BALANCE
+
+                                tp1_count = len([t for t in TRADE_HISTORY if t.get('hit_tp1', False)])
+                                tp2_count = len([t for t in TRADE_HISTORY if t.get('hit_tp2', False)])
+                                tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
+
+                                stats_txt = (
+                                    f"📊 گزارش جامع حساب دمو (Order-Flow):\n"
+                                    f"──────────────────────\n"
+                                    f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
+                                    f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
+                                    f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
+                                    f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
+                                    f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n"
+                                    f"──────────────────────"
+                                )
+                                send_bale_message(chat_id, stats_txt)
+                            elif data_action == 'bot_status':
+                                status_msg = (
+                                    f"⚙ وضعیت سیستم ربات:\n"
+                                    f"• فیلتر فاندینگ ریت: فعال\n"
+                                    f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS}\n"
+                                )
+                                send_bale_message(chat_id, status_msg)
+                            elif data_action == 'test_signal':
+                                test_sym = "BTCUSDT"
+                                test_price = fetch_current_price(test_sym) or 60000.0
+                                test_msg = (
+                                    f"🚀 **تست سیگنال Order-Flow**\n"
+                                    f"──────────────────────\n"
+                                    f"🔹 نماد: {test_sym} (LONG)\n"
+                                    f"💵 قیمت ورود: `{format_price(test_price)}`\n"
+                                    f"──────────────────────"
+                                )
+                                send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
+                            elif data_action == 'reset_stats':
                                 ACTIVE_POSITIONS = []
                                 TRADE_HISTORY = []
                                 PAPER_BALANCE = INITIAL_BALANCE
                                 save_database([], [], ADMIN_CHAT_ID, PAPER_BALANCE)
-                                send_bale_message(chat_id, "🔄 **حساب دمو با موفقیت ریست شد.**\nموجودی به ۱۰۰ دلار برگشت.")
+                                send_bale_message(chat_id, f"🔄 حساب دمو ریست شد و موجودی به {INITIAL_BALANCE} دلار برگشت.")
+                            elif data_action.startswith('tp1_') or data_action.startswith('tp2_') or data_action.startswith('tp3_') or data_action.startswith('sl_'):
+                                parts = data_action.split('_')
+                                action_type = parts[0]
+                                sym = parts[1]
+
+                                for p in ACTIVE_POSITIONS:
+                                    if p['symbol'] == sym:
+                                        margin = p.get('margin', DEFAULT_MARGIN)
+                                        if action_type == 'tp1':
+                                            p['hit_tp1'] = True
+                                            p['sl'] = p['entry'] + (p['entry'] * 0.0005 if p['type'] == 'LONG' else -p['entry'] * 0.0005)
+                                            p['risk_free'] = True
+                                            pnl_manual = calculate_pnl(p['entry'], p['tp1'], p['type'], margin, LEVERAGE) * 0.5
+                                            fee_m = (margin * LEVERAGE * 0.5) * FEE_RATE
+                                            net_m = pnl_manual - fee_m
+                                            PAPER_BALANCE += net_m
+                                            TRADE_HISTORY.append({
+                                                'symbol': sym, 'type': p['type'], 'pnl': net_m,
+                                                'hit_tp1': True, 'hit_tp2': False, 'hit_tp3': False
+                                            })
+                                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
+                                            edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
+                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود ۵۰٪ حجم ({net_m:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
+                                        elif action_type == 'sl':
+                                            p['hit_sl'] = True
+                                            close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
+                                            break
+
                         elif 'message' in update:
                             msg = update['message']
                             if 'text' in msg:
