@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Bot is running with stable ADX & Secure Strategy!", 200
+    return "Institutional Order-Flow Bot is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -127,6 +127,25 @@ def get_signal_keyboard(symbol, p_data=None):
         ]
     }
 
+def fetch_market_internals(symbol):
+    session = requests.Session()
+    session.trust_env = False
+    funding_rate = 0.0
+    oi_change_pct = 0.0
+    try:
+        fr_url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}"
+        res_fr = session.get(fr_url, timeout=5, verify=False)
+        if res_fr.status_code == 200:
+            data = res_fr.json()
+            funding_rate = float(data.get('lastFundingRate', 0.0))
+        oi_url = f"https://fapi.binance.com/fapi/v1/openInterest?symbol={symbol}"
+        res_oi = session.get(oi_url, timeout=5, verify=False)
+        if res_oi.status_code == 200:
+            oi_change_pct = 1.0
+    except Exception as e:
+        print(f"Error fetching market internals for {symbol}: {e}")
+    return funding_rate, oi_change_pct
+
 def fetch_historical_candles(symbol, interval="5m", limit=100):
     url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
     session = requests.Session()
@@ -179,55 +198,18 @@ def calculate_indicators(df):
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['vol_ma20'] = df['volume'].rolling(window=20).mean()
     
-    delta = df['close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['rsi'] = 100 - (100 / (1 + rs))
-    
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift())
     low_close = np.abs(df['low'] - df['close'].shift())
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['atr'] = true_range.rolling(window=14).mean()
-
-    plus_dm = df['high'].diff()
-    minus_dm = df['low'].diff()
-    plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0.0)
-    minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0.0)
-    
-    tr14 = true_range.rolling(window=14).sum()
-    plus_di = 100 * (pd.Series(plus_dm).rolling(window=14).sum() / tr14)
-    minus_di = 100 * (pd.Series(minus_dm).rolling(window=14).sum() / tr14)
-    dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di)
-    df['adx'] = dx.rolling(window=14).mean()
-    
     return df
-
-def get_market_trend_and_higher_atr(symbol):
-    df_15m = fetch_historical_candles(symbol, "15m", 100)
-    if df_15m is not None and len(df_15m) > 50:
-        df_15m['ema20'] = df_15m['close'].ewm(span=20, adjust=False).mean()
-        df_15m['ema50'] = df_15m['close'].ewm(span=50, adjust=False).mean()
-        df_15m['ema200'] = df_15m['close'].ewm(span=200, adjust=False).mean() if len(df_15m) >= 200 else df_15m['ema50']
-        
-        high_low = df_15m['high'] - df_15m['low']
-        high_close = np.abs(df_15m['high'] - df_15m['close'].shift())
-        low_close = np.abs(df_15m['low'] - df_15m['close'].shift())
-        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        df_15m['atr15'] = true_range.rolling(window=14).mean()
-
-        last = df_15m.iloc[-1]
-        trend = 'BULLISH' if last['ema20'] > last['ema50'] and last['close'] > last['ema200'] else ('BEARISH' if last['ema20'] < last['ema50'] and last['close'] < last['ema200'] else 'NEUTRAL')
-        return trend, last.get('atr15', 0)
-    return 'NEUTRAL', 0
 
 def analyze_and_open_position(symbol):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
     
     if len(ACTIVE_POSITIONS) >= MAX_ACTIVE_POSITIONS:
         return False
-        
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
@@ -240,40 +222,30 @@ def analyze_and_open_position(symbol):
     price = last['close']
     ema20 = last['ema20']
     ema50 = last['ema50']
-    rsi = last['rsi']
     atr = last['atr']
     volume = last['volume']
     vol_ma20 = last['vol_ma20']
-    adx = last.get('adx', 20)
 
     if pd.isna(atr) or atr <= 0:
         return False
 
-    if not pd.isna(adx) and adx < 22:
-        return False
-
-    trend_15m, atr_15m = get_market_trend_and_higher_atr(symbol)
-    effective_atr = atr_15m if not pd.isna(atr_15m) and atr_15m > 0 else atr
-
+    # فیلتر حرفه‌ای Order-Flow (فاندینگ ریت)
+    funding_rate, oi_change_pct = fetch_market_internals(symbol)
     signal_type = None
-    
-    is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.35)
-    candle_body = abs(last['close'] - last['open'])
-    avg_body = (abs(df['close'] - df['open'])).rolling(window=10).mean().iloc[-1]
-    has_good_momentum = candle_body > (avg_body * 1.1)
+    is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.3)
 
-    if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and has_good_momentum and not pd.isna(rsi) and 55 < rsi < 65:
+    if ema20 > ema50 and is_high_volume and funding_rate <= 0.0001:
         signal_type = 'LONG'
-        sl = price - (1.5 * effective_atr)
-        tp1 = price + (1.0 * effective_atr)
-        tp2 = price + (1.8 * effective_atr)
-        tp3 = price + (2.6 * effective_atr)
-    elif trend_15m == 'BEARISH' and ema20 < ema50 and is_high_volume and has_good_momentum and not pd.isna(rsi) and 35 < rsi < 45:
+        sl = price - (1.5 * atr)
+        tp1 = price + (1.0 * atr)
+        tp2 = price + (1.8 * atr)
+        tp3 = price + (2.6 * atr)
+    elif ema20 < ema50 and is_high_volume and funding_rate >= -0.0001:
         signal_type = 'SHORT'
-        sl = price + (1.5 * effective_atr)
-        tp1 = price - (1.0 * effective_atr)
-        tp2 = price - (1.8 * effective_atr)
-        tp3 = price - (2.6 * effective_atr)
+        sl = price + (1.5 * atr)
+        tp1 = price - (1.0 * atr)
+        tp2 = price - (1.8 * atr)
+        tp3 = price - (2.6 * atr)
 
     if not signal_type:
         return False
@@ -291,13 +263,14 @@ def analyze_and_open_position(symbol):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
+    fr_formatted = f"{funding_rate * 100:.4f}%"
     
     msg = (
-        f"{icon} سیگنال امن (با فیلتر قدرت روند ADX)\n"
+        f"{icon} **سیگنال الگوریتمی (بر پایه Order-Flow)**\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
-        f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
+        f"📊 نرخ فاندینگ (FR): `{fr_formatted}`\n"
         f"🎯 TP1 (50%): `{format_price(tp1)}`\n"
         f"🎯 TP2 (30%): `{format_price(tp2)}`\n"
         f"🎯 TP3 (20%): `{format_price(tp3)}`\n"
@@ -363,13 +336,13 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     report_text = (
-        f"📢 گزارش بسته شدن معامله\n"
+        f"📢 **گزارش خروج معامله**\n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
         f"💵 قیمت ورود: `{format_price(entry)}`\n"
         f"🏁 قیمت خروج ({reason}): `{format_price(exit_price)}`\n"
         f"💰 سود / زیان خالص: `{net_pnl:+.2f} $`\n"
-        f"💳 موجودی جدید حساب دمو: `{PAPER_BALANCE:.2f} $`\n"
+        f"💳 موجودی دمو: `{PAPER_BALANCE:.2f} $`\n"
         f"──────────────────────"
     )
     if ADMIN_CHAT_ID:
@@ -534,7 +507,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (سیستم امن جدید):\n"
+                                    f"📊 گزارش جامع حساب دمو (Order-Flow):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -549,20 +522,18 @@ def start_telegram_bot():
                                 )
                                 send_bale_message(chat_id, stats_txt)
                             elif data_action == 'bot_status':
-                                logs_text = "\n".join(ERROR_LOGS[-5:]) if ERROR_LOGS else "هیچ خطای ثبت‌شده‌ای وجود ندارد."
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• فیلتر روند ADX: فعال (حداقل ۲۲)\n"
+                                    f"• فیلتر فاندینگ ریت (Order-Flow): فعال\n"
                                     f"• مدیریت حجم جدید: ۵۰٪ - ۳۰٪ - ۲۰٪\n"
-                                    f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n\n"
-                                    f"آخرین خطاها:\n{logs_text}"
+                                    f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                 )
                                 send_bale_message(chat_id, status_msg)
                             elif data_action == 'test_signal':
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال امن**\n"
+                                    f"🚀 **تست سیگنال Order-Flow**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -620,7 +591,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با فیلتر ADX و ساختار امن ۵۰-۳۰-۲۰ فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات حرفه‌ای Order-Flow فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
