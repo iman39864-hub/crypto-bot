@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Institutional Order-Flow Bot is running!", 200
+    return "Strict Order-Flow Bot is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -131,20 +131,15 @@ def fetch_market_internals(symbol):
     session = requests.Session()
     session.trust_env = False
     funding_rate = 0.0
-    oi_change_pct = 0.0
     try:
         fr_url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}"
         res_fr = session.get(fr_url, timeout=5, verify=False)
         if res_fr.status_code == 200:
             data = res_fr.json()
             funding_rate = float(data.get('lastFundingRate', 0.0))
-        oi_url = f"https://fapi.binance.com/fapi/v1/openInterest?symbol={symbol}"
-        res_oi = session.get(oi_url, timeout=5, verify=False)
-        if res_oi.status_code == 200:
-            oi_change_pct = 1.0
     except Exception as e:
         print(f"Error fetching market internals for {symbol}: {e}")
-    return funding_rate, oi_change_pct
+    return funding_rate
 
 def fetch_historical_candles(symbol, interval="5m", limit=100):
     url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
@@ -198,12 +193,30 @@ def calculate_indicators(df):
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['vol_ma20'] = df['volume'].rolling(window=20).mean()
     
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+    
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift())
     low_close = np.abs(df['low'] - df['close'].shift())
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['atr'] = true_range.rolling(window=14).mean()
     return df
+
+def get_higher_timeframe_trend(symbol):
+    df_15m = fetch_historical_candles(symbol, "15m", 100)
+    if df_15m is not None and len(df_15m) > 50:
+        df_15m['ema20'] = df_15m['close'].ewm(span=20, adjust=False).mean()
+        df_15m['ema50'] = df_15m['close'].ewm(span=50, adjust=False).mean()
+        last = df_15m.iloc[-1]
+        if last['ema20'] > last['ema50']:
+            return 'BULLISH'
+        elif last['ema20'] < last['ema50']:
+            return 'BEARISH'
+    return 'NEUTRAL'
 
 def analyze_and_open_position(symbol):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
@@ -222,6 +235,7 @@ def analyze_and_open_position(symbol):
     price = last['close']
     ema20 = last['ema20']
     ema50 = last['ema50']
+    rsi = last['rsi']
     atr = last['atr']
     volume = last['volume']
     vol_ma20 = last['vol_ma20']
@@ -229,18 +243,21 @@ def analyze_and_open_position(symbol):
     if pd.isna(atr) or atr <= 0:
         return False
 
-    # فیلتر حرفه‌ای Order-Flow (فاندینگ ریت)
-    funding_rate, oi_change_pct = fetch_market_internals(symbol)
+    # تاییدیه روند تایم فریم بالاتر (15m) + فاندینگ ریت صرافی
+    trend_15m = get_higher_timeframe_trend(symbol)
+    funding_rate = fetch_market_internals(symbol)
+    
     signal_type = None
-    is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.3)
+    # فیلتر حجم سخت‌گیرانه (حداقل ۱.۵ برابر میانگین برای جلوگیری از سیگنال‌های فیک)
+    is_strong_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.5)
 
-    if ema20 > ema50 and is_high_volume and funding_rate <= 0.0001:
+    if trend_15m == 'BULLISH' and ema20 > ema50 and is_strong_volume and not pd.isna(rsi) and 50 < rsi < 65 and funding_rate <= 0.0001:
         signal_type = 'LONG'
         sl = price - (1.5 * atr)
         tp1 = price + (1.0 * atr)
         tp2 = price + (1.8 * atr)
         tp3 = price + (2.6 * atr)
-    elif ema20 < ema50 and is_high_volume and funding_rate >= -0.0001:
+    elif trend_15m == 'BEARISH' and ema20 < ema50 and is_strong_volume and not pd.isna(rsi) and 35 < rsi < 50 and funding_rate >= -0.0001:
         signal_type = 'SHORT'
         sl = price + (1.5 * atr)
         tp1 = price - (1.0 * atr)
@@ -266,11 +283,11 @@ def analyze_and_open_position(symbol):
     fr_formatted = f"{funding_rate * 100:.4f}%"
     
     msg = (
-        f"{icon} **سیگنال الگوریتمی (بر پایه Order-Flow)**\n"
+        f"{icon} **سیگنال استراتژیک سخت‌گیرانه (Order-Flow + Trend)**\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
-        f"📊 نرخ فاندینگ (FR): `{fr_formatted}`\n"
+        f"📊 فاندینگ ریت: `{fr_formatted}`\n"
         f"🎯 TP1 (50%): `{format_price(tp1)}`\n"
         f"🎯 TP2 (30%): `{format_price(tp2)}`\n"
         f"🎯 TP3 (20%): `{format_price(tp3)}`\n"
@@ -507,7 +524,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (Order-Flow):\n"
+                                    f"📊 گزارش جامع حساب دمو (Strict Order-Flow):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -524,7 +541,7 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• فیلتر فاندینگ ریت (Order-Flow): فعال\n"
+                                    f"• فیلتر سخت‌گیرانه (Order-Flow + 15m Trend): فعال\n"
                                     f"• مدیریت حجم جدید: ۵۰٪ - ۳۰٪ - ۲۰٪\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                 )
@@ -533,15 +550,10 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال Order-Flow**\n"
+                                    f"🚀 **تست سیگنال سخت‌گیرانه**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
-                                    f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-                                    f"🎯 TP1 (50%): `{format_price(test_price * 1.010)}`\n"
-                                    f"🎯 TP2 (30%): `{format_price(test_price * 1.018)}`\n"
-                                    f"🎯 TP3 (20%): `{format_price(test_price * 1.026)}`\n"
-                                    f"🛑 حد ضرر: `{format_price(test_price * 0.985)}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -591,7 +603,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات حرفه‌ای Order-Flow فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با فیلترهای سخت‌گیرانه جدید فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
