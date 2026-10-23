@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Strict Order-Flow Bot is running!", 200
+    return "Strict Order-Flow Bot with Confirmation is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -209,12 +209,14 @@ def calculate_indicators(df):
 def get_higher_timeframe_trend(symbol):
     df_15m = fetch_historical_candles(symbol, "15m", 100)
     if df_15m is not None and len(df_15m) > 50:
-        df_15m['ema20'] = df_15m['close'].ewm(span=20, adjust=False).mean()
-        df_15m['ema50'] = df_15m['close'].ewm(span=50, adjust=False).mean()
-        last = df_15m.iloc[-1]
-        if last['ema20'] > last['ema50']:
+        df_15m['ema20']  = df_15m['close'].ewm(span=20, adjust=False).mean()
+        df_15m['ema50']  = df_15m['close'].ewm(span=50, adjust=False).mean()
+        # بررسی دو کندل آخر برای تاییدیه روند معتبرتر
+        last = df_15m.iloc[-2]
+        curr = df_15m.iloc[-1]
+        if curr['ema20'] > curr['ema50'] and last['ema20'] > last['ema50']:
             return 'BULLISH'
-        elif last['ema20'] < last['ema50']:
+        elif curr['ema20'] < curr['ema50'] and last['ema20'] < last['ema50']:
             return 'BEARISH'
     return 'NEUTRAL'
 
@@ -231,33 +233,36 @@ def analyze_and_open_position(symbol):
         return False
 
     df = calculate_indicators(df)
+    
+    # استفاده از کندلِ ماقبل آخر (بسته شده) به عنوان تاییدیه قطعی برای جلوگیری از سیگنال فیک
+    prev = df.iloc[-2]
     last = df.iloc[-1]
+    
     price = last['close']
-    ema20 = last['ema20']
-    ema50 = last['ema50']
-    rsi = last['rsi']
-    atr = last['atr']
-    volume = last['volume']
-    vol_ma20 = last['vol_ma20']
+    ema20 = prev['ema20']
+    ema50 = prev['ema50']
+    rsi = prev['rsi']
+    atr = prev['atr']
+    volume = prev['volume']
+    vol_ma20 = prev['vol_ma20']
 
     if pd.isna(atr) or atr <= 0:
         return False
 
-    # تاییدیه روند تایم فریم بالاتر (15m) + فاندینگ ریت صرافی
     trend_15m = get_higher_timeframe_trend(symbol)
     funding_rate = fetch_market_internals(symbol)
     
     signal_type = None
-    # فیلتر حجم سخت‌گیرانه (حداقل ۱.۵ برابر میانگین برای جلوگیری از سیگنال‌های فیک)
     is_strong_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.5)
 
-    if trend_15m == 'BULLISH' and ema20 > ema50 and is_strong_volume and not pd.isna(rsi) and 50 < rsi < 65 and funding_rate <= 0.0001:
+    # شرط سخت‌گیرانه‌تر با تاییدیه کندل بسته شده قبلی
+    if trend_15m == 'BULLISH' and prev['close'] > ema20 > ema50 and is_strong_volume and not pd.isna(rsi) and 50 < rsi < 65 and funding_rate <= 0.0001:
         signal_type = 'LONG'
         sl = price - (1.5 * atr)
         tp1 = price + (1.0 * atr)
         tp2 = price + (1.8 * atr)
         tp3 = price + (2.6 * atr)
-    elif trend_15m == 'BEARISH' and ema20 < ema50 and is_strong_volume and not pd.isna(rsi) and 35 < rsi < 50 and funding_rate >= -0.0001:
+    elif trend_15m == 'BEARISH' and prev['close'] < ema20 < ema50 and is_strong_volume and not pd.isna(rsi) and 35 < rsi < 50 and funding_rate >= -0.0001:
         signal_type = 'SHORT'
         sl = price + (1.5 * atr)
         tp1 = price - (1.0 * atr)
@@ -283,7 +288,7 @@ def analyze_and_open_position(symbol):
     fr_formatted = f"{funding_rate * 100:.4f}%"
     
     msg = (
-        f"{icon} **سیگنال استراتژیک سخت‌گیرانه (Order-Flow + Trend)**\n"
+        f"{icon} **سیگنال تاییدشده (Confirmed Order-Flow)**\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -524,7 +529,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (Strict Order-Flow):\n"
+                                    f"📊 گزارش جامع حساب دمو (Confirmed Order-Flow):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -541,7 +546,7 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• فیلتر سخت‌گیرانه (Order-Flow + 15m Trend): فعال\n"
+                                    f"• فیلتر تاییدیه کندل بسته شده: فعال ✅\n"
                                     f"• مدیریت حجم جدید: ۵۰٪ - ۳۰٪ - ۲۰٪\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                 )
@@ -550,7 +555,7 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال سخت‌گیرانه**\n"
+                                    f"🚀 **تست سیگنال تاییدشده**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -603,7 +608,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با فیلترهای سخت‌گیرانه جدید فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با فیلتر تاییدیه کندل جدید فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
