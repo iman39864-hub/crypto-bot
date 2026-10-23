@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Strict Order-Flow Bot with Confirmation is running!", 200
+    return "Balanced Calibrated Bot is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -116,9 +116,9 @@ def get_main_menu_keyboard():
     }
 
 def get_signal_keyboard(symbol, p_data=None):
-    t1 = "✅ TP1 (50% بسته شد)" if (p_data and p_data.get('hit_tp1')) else "🎯 TP1 (50%)"
-    t2 = "✅ TP2 (تایید شده)" if (p_data and p_data.get('hit_tp2')) else "🎯 TP2 (30%)"
-    t3 = "✅ TP3 (تایید شده)" if (p_data and p_data.get('hit_tp3')) else "🎯 TP3 (20%)"
+    t1 = "✅ TP1 (30% بسته شد)" if (p_data and p_data.get('hit_tp1')) else "🎯 TP1 (30%)"
+    t2 = "✅ TP2 (تایید شده)" if (p_data and p_data.get('hit_tp2')) else "🎯 TP2 (40%)"
+    t3 = "✅ TP3 (تایید شده)" if (p_data and p_data.get('hit_tp3')) else "🎯 TP3 (30%)"
     sl_text = "❌ SL (تایید شده)" if (p_data and p_data.get('hit_sl')) else "🛑 ثبت لمس SL"
     return {
         "inline_keyboard": [
@@ -126,20 +126,6 @@ def get_signal_keyboard(symbol, p_data=None):
             [{"text": t3, "callback_data": f"tp3_{symbol}"}, {"text": sl_text, "callback_data": f"sl_{symbol}"}]
         ]
     }
-
-def fetch_market_internals(symbol):
-    session = requests.Session()
-    session.trust_env = False
-    funding_rate = 0.0
-    try:
-        fr_url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={symbol}"
-        res_fr = session.get(fr_url, timeout=5, verify=False)
-        if res_fr.status_code == 200:
-            data = res_fr.json()
-            funding_rate = float(data.get('lastFundingRate', 0.0))
-    except Exception as e:
-        print(f"Error fetching market internals for {symbol}: {e}")
-    return funding_rate
 
 def fetch_historical_candles(symbol, interval="5m", limit=100):
     url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
@@ -206,25 +192,30 @@ def calculate_indicators(df):
     df['atr'] = true_range.rolling(window=14).mean()
     return df
 
-def get_higher_timeframe_trend(symbol):
+def get_market_trend_and_higher_atr(symbol):
     df_15m = fetch_historical_candles(symbol, "15m", 100)
     if df_15m is not None and len(df_15m) > 50:
-        df_15m['ema20']  = df_15m['close'].ewm(span=20, adjust=False).mean()
-        df_15m['ema50']  = df_15m['close'].ewm(span=50, adjust=False).mean()
-        # بررسی دو کندل آخر برای تاییدیه روند معتبرتر
-        last = df_15m.iloc[-2]
-        curr = df_15m.iloc[-1]
-        if curr['ema20'] > curr['ema50'] and last['ema20'] > last['ema50']:
-            return 'BULLISH'
-        elif curr['ema20'] < curr['ema50'] and last['ema20'] < last['ema50']:
-            return 'BEARISH'
-    return 'NEUTRAL'
+        df_15m['ema20'] = df_15m['close'].ewm(span=20, adjust=False).mean()
+        df_15m['ema50'] = df_15m['close'].ewm(span=50, adjust=False).mean()
+        df_15m['ema200'] = df_15m['close'].ewm(span=200, adjust=False).mean() if len(df_15m) >= 200 else df_15m['ema50']
+        
+        high_low = df_15m['high'] - df_15m['low']
+        high_close = np.abs(df_15m['high'] - df_15m['close'].shift())
+        low_close = np.abs(df_15m['low'] - df_15m['close'].shift())
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        df_15m['atr15'] = true_range.rolling(window=14).mean()
+
+        last = df_15m.iloc[-1]
+        trend = 'BULLISH' if last['ema20'] > last['ema50'] and last['close'] > last['ema200'] else ('BEARISH' if last['ema20'] < last['ema50'] and last['close'] < last['ema200'] else 'NEUTRAL')
+        return trend, last.get('atr15', 0)
+    return 'NEUTRAL', 0
 
 def analyze_and_open_position(symbol):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
     
     if len(ACTIVE_POSITIONS) >= MAX_ACTIVE_POSITIONS:
         return False
+        
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
@@ -233,41 +224,36 @@ def analyze_and_open_position(symbol):
         return False
 
     df = calculate_indicators(df)
-    
-    # استفاده از کندلِ ماقبل آخر (بسته شده) به عنوان تاییدیه قطعی برای جلوگیری از سیگنال فیک
-    prev = df.iloc[-2]
     last = df.iloc[-1]
-    
     price = last['close']
-    ema20 = prev['ema20']
-    ema50 = prev['ema50']
-    rsi = prev['rsi']
-    atr = prev['atr']
-    volume = prev['volume']
-    vol_ma20 = prev['vol_ma20']
+    ema20 = last['ema20']
+    ema50 = last['ema50']
+    rsi = last['rsi']
+    atr = last['atr']
+    volume = last['volume']
+    vol_ma20 = last['vol_ma20']
 
     if pd.isna(atr) or atr <= 0:
         return False
 
-    trend_15m = get_higher_timeframe_trend(symbol)
-    funding_rate = fetch_market_internals(symbol)
-    
-    signal_type = None
-    is_strong_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.5)
+    trend_15m, atr_15m = get_market_trend_and_higher_atr(symbol)
+    effective_atr = atr_15m if not pd.isna(atr_15m) and atr_15m > 0 else atr
 
-    # شرط سخت‌گیرانه‌تر با تاییدیه کندل بسته شده قبلی
-    if trend_15m == 'BULLISH' and prev['close'] > ema20 > ema50 and is_strong_volume and not pd.isna(rsi) and 50 < rsi < 65 and funding_rate <= 0.0001:
+    signal_type = None
+    is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.2)
+
+    if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 50 < rsi < 65:
         signal_type = 'LONG'
-        sl = price - (1.5 * atr)
-        tp1 = price + (1.0 * atr)
-        tp2 = price + (1.8 * atr)
-        tp3 = price + (2.6 * atr)
-    elif trend_15m == 'BEARISH' and prev['close'] < ema20 < ema50 and is_strong_volume and not pd.isna(rsi) and 35 < rsi < 50 and funding_rate >= -0.0001:
+        sl = price - (1.5 * effective_atr)
+        tp1 = price + (1.0 * effective_atr)
+        tp2 = price + (1.8 * effective_atr)
+        tp3 = price + (2.6 * effective_atr)
+    elif trend_15m == 'BEARISH' and ema20 < ema50 and is_high_volume and not pd.isna(rsi) and 35 < rsi < 50:
         signal_type = 'SHORT'
-        sl = price + (1.5 * atr)
-        tp1 = price - (1.0 * atr)
-        tp2 = price - (1.8 * atr)
-        tp3 = price - (2.6 * atr)
+        sl = price + (1.5 * effective_atr)
+        tp1 = price - (1.0 * effective_atr)
+        tp2 = price - (1.8 * effective_atr)
+        tp3 = price - (2.6 * effective_atr)
 
     if not signal_type:
         return False
@@ -285,17 +271,16 @@ def analyze_and_open_position(symbol):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     icon = "🚀" if signal_type == 'LONG' else "📉"
-    fr_formatted = f"{funding_rate * 100:.4f}%"
     
     msg = (
-        f"{icon} **سیگنال تاییدشده (Confirmed Order-Flow)**\n"
+        f"{icon} سیگنال متعادل کالیبره‌شده (TP1 با ۳۰٪)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
-        f"📊 فاندینگ ریت: `{fr_formatted}`\n"
-        f"🎯 TP1 (50%): `{format_price(tp1)}`\n"
-        f"🎯 TP2 (30%): `{format_price(tp2)}`\n"
-        f"🎯 TP3 (20%): `{format_price(tp3)}`\n"
+        f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
+        f"🎯 TP1 (30%): `{format_price(tp1)}`\n"
+        f"🎯 TP2 (40%): `{format_price(tp2)}`\n"
+        f"🎯 TP3 (30%): `{format_price(tp3)}`\n"
         f"🛑 حد ضرر: `{format_price(sl)}`\n"
         f"──────────────────────"
     )
@@ -358,13 +343,13 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     report_text = (
-        f"📢 **گزارش خروج معامله**\n"
+        f"📢 گزارش بسته شدن معامله\n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
         f"💵 قیمت ورود: `{format_price(entry)}`\n"
         f"🏁 قیمت خروج ({reason}): `{format_price(exit_price)}`\n"
         f"💰 سود / زیان خالص: `{net_pnl:+.2f} $`\n"
-        f"💳 موجودی دمو: `{PAPER_BALANCE:.2f} $`\n"
+        f"💳 موجودی جدید حساب دمو: `{PAPER_BALANCE:.2f} $`\n"
         f"──────────────────────"
     )
     if ADMIN_CHAT_ID:
@@ -413,14 +398,14 @@ def automated_price_monitor():
                             p['hit_tp3'] = True
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
-                            close_position_completely(p, curr, reason="هدف نهایی TP3 (20% پایانی)")
+                            close_position_completely(p, curr, reason="هدف نهایی TP3 (30% پایانی)")
                             continue
                         elif curr >= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
                             p['sl'] = p['tp1']
-                            pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.3
-                            fee_part = (margin * LEVERAGE * 0.3) * FEE_RATE
+                            pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
+                            fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
                             net_part = pnl_part - fee_part
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({
@@ -428,13 +413,13 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': True, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۳۰٪ حجم بسته شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr >= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
                             p['sl'] = entry + (entry * 0.0005)
                             p['risk_free'] = True
-                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.5
-                            fee_part = (margin * LEVERAGE * 0.5) * FEE_RATE
+                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.3
+                            fee_part = (margin * LEVERAGE * 0.3) * FEE_RATE
                             net_part = pnl_part - fee_part
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({
@@ -442,20 +427,20 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': False, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (۵۰٪ حجم بسته شد!). SL به نقطه ورود منتقل و امن شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (۳۰٪ حجم بسته شد!). SL به نقطه ورود منتقل و امن شد.", reply_to_message_id=p.get('msg_id'))
                     else: # SHORT
                         if curr <= p['tp3'] and not p.get('hit_tp3', False):
                             p['hit_tp3'] = True
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
-                            close_position_completely(p, curr, reason="هدف نهایی TP3 (20% پایانی)")
+                            close_position_completely(p, curr, reason="هدف نهایی TP3 (30% پایانی)")
                             continue
                         elif curr <= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
                             p['sl'] = p['tp1']
-                            pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.3
-                            fee_part = (margin * LEVERAGE * 0.3) * FEE_RATE
+                            pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
+                            fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
                             net_part = pnl_part - fee_part
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({
@@ -463,13 +448,13 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': True, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۳۰٪ حجم بسته شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr <= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
                             p['sl'] = entry - (entry * 0.0005)
                             p['risk_free'] = True
-                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.5
-                            fee_part = (margin * LEVERAGE * 0.5) * FEE_RATE
+                            pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.3
+                            fee_part = (margin * LEVERAGE * 0.3) * FEE_RATE
                             net_part = pnl_part - fee_part
                             PAPER_BALANCE += net_part
                             TRADE_HISTORY.append({
@@ -477,7 +462,7 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': False, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (۵۰٪ حجم بسته شد!). SL به نقطه ورود منتقل و امن شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (۳۰٪ حجم بسته شد!). SL به نقطه ورود منتقل و امن شد.", reply_to_message_id=p.get('msg_id'))
 
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
@@ -529,7 +514,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (Confirmed Order-Flow):\n"
+                                    f"📊 گزارش جامع حساب دمو (Balanced Strategy):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -537,17 +522,17 @@ def start_telegram_bot():
                                     f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
                                     f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n\n"
                                     f"📌 **آمار تفکیکی اهداف:**\n"
-                                    f"• تعداد برخورد به TP1 (50%): `{tp1_count}` بار\n"
-                                    f"• تعداد برخورد به TP2 (30%): `{tp2_count}` بار\n"
-                                    f"• تعداد برخورد به TP3 (20%): `{tp3_count}` بار\n"
+                                    f"• تعداد برخورد به TP1 (30%): `{tp1_count}` بار\n"
+                                    f"• تعداد برخورد به TP2 (40%): `{tp2_count}` بار\n"
+                                    f"• تعداد برخورد به TP3 (30%): `{tp3_count}` بار\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, stats_txt)
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• فیلتر تاییدیه کندل بسته شده: فعال ✅\n"
-                                    f"• مدیریت حجم جدید: ۵۰٪ - ۳۰٪ - ۲۰٪\n"
+                                    f"• استراتژی: کالیبره‌شده متعادل (Trend + ATR)\n"
+                                    f"• ساختار حجم جدید: ۳۰٪ (در TP1) - ۴۰٪ (در TP2) - ۳۰٪ (در TP3)\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                 )
                                 send_bale_message(chat_id, status_msg)
@@ -555,10 +540,14 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال تاییدشده**\n"
+                                    f"🚀 **تست سیگنال متعادل**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
+                                    f"🎯 TP1 (30%): `{format_price(test_price * 1.010)}`\n"
+                                    f"🎯 TP2 (40%): `{format_price(test_price * 1.018)}`\n"
+                                    f"🎯 TP3 (30%): `{format_price(test_price * 1.026)}`\n"
+                                    f"🛑 حد ضرر: `{format_price(test_price * 0.985)}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -580,8 +569,8 @@ def start_telegram_bot():
                                             p['hit_tp1'] = True
                                             p['sl'] = p['entry'] + (p['entry'] * 0.0005 if p['type'] == 'LONG' else -p['entry'] * 0.0005)
                                             p['risk_free'] = True
-                                            pnl_manual = calculate_pnl(p['entry'], p['tp1'], p['type'], margin, LEVERAGE) * 0.5
-                                            fee_m = (margin * LEVERAGE * 0.5) * FEE_RATE
+                                            pnl_manual = calculate_pnl(p['entry'], p['tp1'], p['type'], margin, LEVERAGE) * 0.3
+                                            fee_m = (margin * LEVERAGE * 0.3) * FEE_RATE
                                             net_m = pnl_manual - fee_m
                                             PAPER_BALANCE += net_m
                                             TRADE_HISTORY.append({
@@ -590,7 +579,7 @@ def start_telegram_bot():
                                             })
                                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
                                             edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود ۵۰٪ حجم ({net_m:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
+                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود ۳۰٪ حجم ({net_m:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
                                         elif action_type == 'sl':
                                             p['hit_sl'] = True
                                             close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
@@ -608,7 +597,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با فیلتر تاییدیه کندل جدید فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با استراتژی متعادل و حجم جدید ۳۰-۴۰-۳۰ فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
