@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Optimized Balanced Bot is running!", 200
+    return "30m Optimized Bot is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -127,7 +127,7 @@ def get_signal_keyboard(symbol, p_data=None):
         ]
     }
 
-def fetch_historical_candles(symbol, interval="5m", limit=100):
+def fetch_historical_candles(symbol, interval="30m", limit=100):
     url = f"https://api.toobit.com/quote/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
     session = requests.Session()
     session.trust_env = False
@@ -193,21 +193,22 @@ def calculate_indicators(df):
     return df
 
 def get_market_trend_and_higher_atr(symbol):
-    df_15m = fetch_historical_candles(symbol, "15m", 100)
-    if df_15m is not None and len(df_15m) > 50:
-        df_15m['ema20'] = df_15m['close'].ewm(span=20, adjust=False).mean()
-        df_15m['ema50'] = df_15m['close'].ewm(span=50, adjust=False).mean()
-        df_15m['ema200'] = df_15m['close'].ewm(span=200, adjust=False).mean() if len(df_15m) >= 200 else df_15m['ema50']
+    # چک کردن تایم‌فریم بالاتر معادل (1h) برای تایید روند ۳۰ دقیقه
+    df_1h = fetch_historical_candles(symbol, "1h", 100)
+    if df_1h is not None and len(df_1h) > 50:
+        df_1h['ema20'] = df_1h['close'].ewm(span=20, adjust=False).mean()
+        df_1h['ema50'] = df_1h['close'].ewm(span=50, adjust=False).mean()
+        df_1h['ema200'] = df_1h['close'].ewm(span=200, adjust=False).mean() if len(df_1h) >= 200 else df_1h['ema50']
         
-        high_low = df_15m['high'] - df_15m['low']
-        high_close = np.abs(df_15m['high'] - df_15m['close'].shift())
-        low_close = np.abs(df_15m['low'] - df_15m['close'].shift())
+        high_low = df_1h['high'] - df_1h['low']
+        high_close = np.abs(df_1h['high'] - df_1h['close'].shift())
+        low_close = np.abs(df_1h['low'] - df_1h['close'].shift())
         true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        df_15m['atr15'] = true_range.rolling(window=14).mean()
+        df_1h['atr1h'] = true_range.rolling(window=14).mean()
 
-        last = df_15m.iloc[-1]
+        last = df_1h.iloc[-1]
         trend = 'BULLISH' if last['ema20'] > last['ema50'] and last['close'] > last['ema200'] else ('BEARISH' if last['ema20'] < last['ema50'] and last['close'] < last['ema200'] else 'NEUTRAL')
-        return trend, last.get('atr15', 0)
+        return trend, last.get('atr1h', 0)
     return 'NEUTRAL', 0
 
 def analyze_and_open_position(symbol):
@@ -219,7 +220,8 @@ def analyze_and_open_position(symbol):
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
-    df = fetch_historical_candles(symbol, "5m", 100)
+    # تحلیل روی تایم‌فریم اصلی ۳۰ دقیقه
+    df = fetch_historical_candles(symbol, "30m", 100)
     if df is None or len(df) < 30:
         return False
 
@@ -236,27 +238,25 @@ def analyze_and_open_position(symbol):
     if pd.isna(atr) or atr <= 0:
         return False
 
-    trend_15m, atr_15m = get_market_trend_and_higher_atr(symbol)
-    effective_atr = atr_15m if not pd.isna(atr_15m) and atr_15m > 0 else atr
+    trend_1h, atr_1h = get_market_trend_and_higher_atr(symbol)
+    effective_atr = atr_1h if not pd.isna(atr_1h) and atr_1h > 0 else atr
 
     signal_type = None
     is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.2)
-    
-    # فیلتر قدرت شیب روند (EMA Spread) برای دوری از بازارهای رنج و فرسایشی
-    ema_spread = abs(ema20 - ema50) / price > 0.0008
+    ema_spread = abs(ema20 - ema50) / price > 0.001
 
-    if trend_15m == 'BULLISH' and ema20 > ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and 50 < rsi < 65:
+    if trend_1h == 'BULLISH' and ema20 > ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and 50 < rsi < 68:
         signal_type = 'LONG'
-        sl = price - (1.8 * effective_atr)  # حد ضرر بهینه‌شده و مقاوم‌تر در برابر فیک‌بریک‌اوت‌ها
-        tp1 = price + (1.0 * effective_atr)
-        tp2 = price + (1.8 * effective_atr)
-        tp3 = price + (2.6 * effective_atr)
-    elif trend_15m == 'BEARISH' and ema20 < ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and 35 < rsi < 50:
+        sl = price - (1.8 * effective_atr)
+        tp1 = price + (1.2 * effective_atr)
+        tp2 = price + (2.2 * effective_atr)
+        tp3 = price + (3.2 * effective_atr)
+    elif trend_1h == 'BEARISH' and ema20 < ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and 32 < rsi < 50:
         signal_type = 'SHORT'
         sl = price + (1.8 * effective_atr)
-        tp1 = price - (1.0 * effective_atr)
-        tp2 = price - (1.8 * effective_atr)
-        tp3 = price - (2.6 * effective_atr)
+        tp1 = price - (1.2 * effective_atr)
+        tp2 = price - (2.2 * effective_atr)
+        tp3 = price - (3.2 * effective_atr)
 
     if not signal_type:
         return False
@@ -276,7 +276,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال بهینه‌شده (SL مقاوم + Trend Spread)\n"
+        f"{icon} سیگنال تایم‌فریم ۳۰ دقیقه (پایدار)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -373,8 +373,8 @@ def periodic_auto_scanner():
                 if len(ACTIVE_POSITIONS) >= MAX_ACTIVE_POSITIONS:
                     break
                 analyze_and_open_position(sym)
-                time.sleep(0.5)
-            time.sleep(60)
+                time.sleep(1)
+            time.sleep(120)  # اسکن در تایم‌فریم ۳۰ دقیقه هر ۲ دقیقه یکبار کافیست
         except Exception as e:
             time.sleep(30)
 
@@ -517,7 +517,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (Optimized Balanced):\n"
+                                    f"📊 گزارش جامع حساب دمو (30m Timeframe):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -534,7 +534,7 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• استراتژی: کالیبره‌شده بهینه (SL مقاوم بر روی 1.8 ATR)\n"
+                                    f"• تایم‌فریم تحلیل: ۳۰ دقیقه (30m) ⏰\n"
                                     f"• مدیریت حجم: ۳۰٪ - ۴۰٪ - ۳۰٪\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                 )
@@ -543,7 +543,7 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال بهینه**\n"
+                                    f"🚀 **تست سیگنال 30 دقیقه‌ای**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -596,7 +596,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با تنظیمات جدید ضد فیک‌بریک‌اوت فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات روی تایم‌فریم ۳۰ دقیقه فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
