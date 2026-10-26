@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Balanced Calibrated Bot is running!", 200
+    return "Optimized Balanced Bot is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -241,16 +241,19 @@ def analyze_and_open_position(symbol):
 
     signal_type = None
     is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.2)
+    
+    # فیلتر قدرت شیب روند (EMA Spread) برای دوری از بازارهای رنج و فرسایشی
+    ema_spread = abs(ema20 - ema50) / price > 0.0008
 
-    if trend_15m == 'BULLISH' and ema20 > ema50 and is_high_volume and not pd.isna(rsi) and 50 < rsi < 65:
+    if trend_15m == 'BULLISH' and ema20 > ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and 50 < rsi < 65:
         signal_type = 'LONG'
-        sl = price - (1.5 * effective_atr)
+        sl = price - (1.8 * effective_atr)  # حد ضرر بهینه‌شده و مقاوم‌تر در برابر فیک‌بریک‌اوت‌ها
         tp1 = price + (1.0 * effective_atr)
         tp2 = price + (1.8 * effective_atr)
         tp3 = price + (2.6 * effective_atr)
-    elif trend_15m == 'BEARISH' and ema20 < ema50 and is_high_volume and not pd.isna(rsi) and 35 < rsi < 50:
+    elif trend_15m == 'BEARISH' and ema20 < ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and 35 < rsi < 50:
         signal_type = 'SHORT'
-        sl = price + (1.5 * effective_atr)
+        sl = price + (1.8 * effective_atr)
         tp1 = price - (1.0 * effective_atr)
         tp2 = price - (1.8 * effective_atr)
         tp3 = price - (2.6 * effective_atr)
@@ -273,7 +276,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال متعادل کالیبره‌شده (TP1 با ۳۰٪)\n"
+        f"{icon} سیگنال بهینه‌شده (SL مقاوم + Trend Spread)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -514,7 +517,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (Balanced Strategy):\n"
+                                    f"📊 گزارش جامع حساب دمو (Optimized Balanced):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -531,8 +534,8 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• استراتژی: کالیبره‌شده متعادل (Trend + ATR)\n"
-                                    f"• ساختار حجم جدید: ۳۰٪ (در TP1) - ۴۰٪ (در TP2) - ۳۰٪ (در TP3)\n"
+                                    f"• استراتژی: کالیبره‌شده بهینه (SL مقاوم بر روی 1.8 ATR)\n"
+                                    f"• مدیریت حجم: ۳۰٪ - ۴۰٪ - ۳۰٪\n"
                                     f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
                                 )
                                 send_bale_message(chat_id, status_msg)
@@ -540,14 +543,10 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال متعادل**\n"
+                                    f"🚀 **تست سیگنال بهینه**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
-                                    f"🎯 TP1 (30%): `{format_price(test_price * 1.010)}`\n"
-                                    f"🎯 TP2 (40%): `{format_price(test_price * 1.018)}`\n"
-                                    f"🎯 TP3 (30%): `{format_price(test_price * 1.026)}`\n"
-                                    f"🛑 حد ضرر: `{format_price(test_price * 0.985)}`\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, test_msg, reply_markup=get_signal_keyboard(test_sym))
@@ -597,7 +596,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با استراتژی متعادل و حجم جدید ۳۰-۴۰-۳۰ فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با تنظیمات جدید ضد فیک‌بریک‌اوت فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
