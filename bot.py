@@ -6,7 +6,7 @@ import json
 import os
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "30m Optimized Bot is running!", 200
+    return "Pro 30m Bot (Momentum + Trailing + Session) is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -184,6 +184,8 @@ def calculate_indicators(df):
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['rsi'] = 100 - (100 / (1 + rs))
+    # محاسبه شیب و تغییرات RSI برای فیلتر مومنتوم
+    df['rsi_slope'] = df['rsi'].diff()
     
     high_low = df['high'] - df['low']
     high_close = np.abs(df['high'] - df['close'].shift())
@@ -193,7 +195,6 @@ def calculate_indicators(df):
     return df
 
 def get_market_trend_and_higher_atr(symbol):
-    # چک کردن تایم‌فریم بالاتر معادل (1h) برای تایید روند ۳۰ دقیقه
     df_1h = fetch_historical_candles(symbol, "1h", 100)
     if df_1h is not None and len(df_1h) > 50:
         df_1h['ema20'] = df_1h['close'].ewm(span=20, adjust=False).mean()
@@ -211,6 +212,14 @@ def get_market_trend_and_higher_atr(symbol):
         return trend, last.get('atr1h', 0)
     return 'NEUTRAL', 0
 
+def is_good_trading_session():
+    # فیلتر ساعات معاملاتی: اجتناب از ساعات کم‌حجم و رنج شدید شبانه (مثلا بین 01:00 تا 06:00 UTC)
+    now_utc = datetime.now(timezone.utc)
+    hour = now_utc.hour
+    if 1 <= hour <= 6:
+        return False
+    return True
+
 def analyze_and_open_position(symbol):
     global ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE
     
@@ -220,7 +229,10 @@ def analyze_and_open_position(symbol):
     if any(p['symbol'] == symbol for p in ACTIVE_POSITIONS):
         return False
 
-    # تحلیل روی تایم‌فریم اصلی ۳۰ دقیقه
+    # فیلتر ساعات کم‌حجم
+    if not is_good_trading_session():
+        return False
+
     df = fetch_historical_candles(symbol, "30m", 100)
     if df is None or len(df) < 30:
         return False
@@ -231,6 +243,7 @@ def analyze_and_open_position(symbol):
     ema20 = last['ema20']
     ema50 = last['ema50']
     rsi = last['rsi']
+    rsi_slope = last['rsi_slope']
     atr = last['atr']
     volume = last['volume']
     vol_ma20 = last['vol_ma20']
@@ -245,13 +258,14 @@ def analyze_and_open_position(symbol):
     is_high_volume = not pd.isna(vol_ma20) and volume > (vol_ma20 * 1.2)
     ema_spread = abs(ema20 - ema50) / price > 0.001
 
-    if trend_1h == 'BULLISH' and ema20 > ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and 50 < rsi < 68:
+    # مومنتوم پیشرفته RSI (بررسی شیب صعودی/نزولی RSI همراه با شرایط روند)
+    if trend_1h == 'BULLISH' and ema20 > ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and not pd.isna(rsi_slope) and 50 < rsi < 68 and rsi_slope > 0:
         signal_type = 'LONG'
         sl = price - (1.8 * effective_atr)
         tp1 = price + (1.2 * effective_atr)
         tp2 = price + (2.2 * effective_atr)
         tp3 = price + (3.2 * effective_atr)
-    elif trend_1h == 'BEARISH' and ema20 < ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and 32 < rsi < 50:
+    elif trend_1h == 'BEARISH' and ema20 < ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and not pd.isna(rsi_slope) and 32 < rsi < 50 and rsi_slope < 0:
         signal_type = 'SHORT'
         sl = price + (1.8 * effective_atr)
         tp1 = price - (1.2 * effective_atr)
@@ -276,7 +290,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال تایم‌فریم ۳۰ دقیقه (پایدار)\n"
+        f"{icon} سیگنال حرفه‌ای ۳۰ دقیقه (Pro Momentum)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -374,7 +388,7 @@ def periodic_auto_scanner():
                     break
                 analyze_and_open_position(sym)
                 time.sleep(1)
-            time.sleep(120)  # اسکن در تایم‌فریم ۳۰ دقیقه هر ۲ دقیقه یکبار کافیست
+            time.sleep(120)
         except Exception as e:
             time.sleep(30)
 
@@ -406,6 +420,7 @@ def automated_price_monitor():
                         elif curr >= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
+                            # تریلینگ استاپ هوشمند: با لمس TP2، حد ضرر کلاً به TP1 منتقل می‌شود تا سود تضمین شود
                             p['sl'] = p['tp1']
                             pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
@@ -416,7 +431,7 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': True, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد و SL به TP1 قفل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr >= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
                             p['sl'] = entry + (entry * 0.0005)
@@ -441,6 +456,7 @@ def automated_price_monitor():
                         elif curr <= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
+                            # تریلینگ استاپ هوشمند برای شورت
                             p['sl'] = p['tp1']
                             pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
@@ -451,7 +467,7 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': True, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد و SL به TP1 قفل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr <= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
                             p['sl'] = entry - (entry * 0.0005)
@@ -517,7 +533,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (30m Timeframe):\n"
+                                    f"📊 گزارش جامع حساب دمو (Pro Momentum + Trailing):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -534,16 +550,16 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• تایم‌فریم تحلیل: ۳۰ دقیقه (30m) ⏰\n"
-                                    f"• مدیریت حجم: ۳۰٪ - ۴۰٪ - ۳۰٪\n"
-                                    f"• حداکثر پوزیشن‌های هم‌زمان: {MAX_ACTIVE_POSITIONS} پوزیشن\n"
+                                    f"• تایم‌فریم: ۳۰ دقیقه + مومنتوم RSI 🚀\n"
+                                    f"• تریلینگ استاپ هوشمند: فعال (قفل سود در TP2)\n"
+                                    f"• فیلتر ساعات کم‌حجم: فعال ✅\n"
                                 )
                                 send_bale_message(chat_id, status_msg)
                             elif data_action == 'test_signal':
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال 30 دقیقه‌ای**\n"
+                                    f"🚀 **تست سیگنال حرفه‌ای**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -596,7 +612,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات روی تایم‌فریم ۳۰ دقیقه فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات حرفه‌ای (مومنتوم + تریلینگ + تایم ۳۰م) فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
