@@ -17,7 +17,7 @@ DB_FILE = 'positions_db.json'
 
 ADMIN_CHAT_ID = None
 
-DEFAULT_MARGIN = 50.0  # تغییر مارجین پایه به 50 دلار
+DEFAULT_MARGIN = 25.0  # تنظیم مارجین روی 25 دلار (بهینه و امن)
 LEVERAGE = 10
 INITIAL_BALANCE = 100.0
 FEE_RATE = 0.0005
@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Pro 30m Bot (Margin 50$) is running!", 200
+    return "Pro 30m Bot (Margin 25$ + Weekend Filter) is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -214,8 +214,17 @@ def get_market_trend_and_higher_atr(symbol):
 def is_good_trading_session():
     now_utc = datetime.now(timezone.utc)
     hour = now_utc.hour
+    weekday = now_utc.weekday() # 5 یعنی شنبه (به وقت UTC) و 6 یعنی یکشنبه
+    
+    # فیلتر ساعات کم‌حجم شبانه (01:00 تا 06:00 UTC)
     if 1 <= hour <= 6:
         return False
+        
+    # فیلتر روزهای آخر هفته میلادی (شنبه و یکشنبه کامل یا ساعات کم‌نقدینگی آخر هفته)
+    # اگر خواستید اواخر شنبه/یکشنبه ربات استراحت کند این شرط فعال می‌ماند
+    if weekday == 5 or weekday == 6:
+        return False
+        
     return True
 
 def analyze_and_open_position(symbol):
@@ -286,7 +295,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال ۳۰ دقیقه (Margin: 50$)\n"
+        f"{icon} سیگنال ۳۰ دقیقه (Margin: 25$ + Weekend Filter)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -527,7 +536,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (Margin 50$):\n"
+                                    f"📊 گزارش جامع حساب دمو (Margin 25$ + Weekend Filter):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -546,14 +555,14 @@ def start_telegram_bot():
                                     f"⚙ وضعیت سیستم ربات:\n"
                                     f"• تایم‌فریم: ۳۰ دقیقه + مومنتوم RSI 🚀\n"
                                     f"• مارجین پایه هر معامله: {DEFAULT_MARGIN} $\n"
-                                    f"• اهرم: {LEVERAGE}x\n"
+                                    f"• فیلتر آخر هفته (Weekend Filter): فعال ✅\n"
                                 )
                                 send_bale_message(chat_id, status_msg)
                             elif data_action == 'test_signal':
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال (مارجین ۵۰ دلاری)**\n"
+                                    f"🚀 **تست سیگنال (مارجین ۲۵ دلاری)**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -606,7 +615,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با مارجین ۵۰ دلاری فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با مارجین ۲۵ دلاری و فیلتر آخر هفته فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
