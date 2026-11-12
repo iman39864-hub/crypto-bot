@@ -17,7 +17,7 @@ DB_FILE = 'positions_db.json'
 
 ADMIN_CHAT_ID = None
 
-DEFAULT_MARGIN = 25.0  # تنظیم مارجین روی 25 دلار (بهینه و امن)
+DEFAULT_MARGIN = 25.0
 LEVERAGE = 10
 INITIAL_BALANCE = 100.0
 FEE_RATE = 0.0005
@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Pro 30m Bot (Margin 25$ + Weekend Filter) is running!", 200
+    return "Pro 30m Bot (Optimized TP & Fees) is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -214,17 +214,12 @@ def get_market_trend_and_higher_atr(symbol):
 def is_good_trading_session():
     now_utc = datetime.now(timezone.utc)
     hour = now_utc.hour
-    weekday = now_utc.weekday() # 5 یعنی شنبه (به وقت UTC) و 6 یعنی یکشنبه
+    weekday = now_utc.weekday()
     
-    # فیلتر ساعات کم‌حجم شبانه (01:00 تا 06:00 UTC)
     if 1 <= hour <= 6:
         return False
-        
-    # فیلتر روزهای آخر هفته میلادی (شنبه و یکشنبه کامل یا ساعات کم‌نقدینگی آخر هفته)
-    # اگر خواستید اواخر شنبه/یکشنبه ربات استراحت کند این شرط فعال می‌ماند
     if weekday == 5 or weekday == 6:
         return False
-        
     return True
 
 def analyze_and_open_position(symbol):
@@ -266,16 +261,17 @@ def analyze_and_open_position(symbol):
 
     if trend_1h == 'BULLISH' and ema20 > ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and not pd.isna(rsi_slope) and 50 < rsi < 68 and rsi_slope > 0:
         signal_type = 'LONG'
-        sl = price - (1.8 * effective_atr)
-        tp1 = price + (1.2 * effective_atr)
-        tp2 = price + (2.2 * effective_atr)
-        tp3 = price + (3.2 * effective_atr)
+        # تنظیمات جدید و بهینه‌شده‌ی اهداف و حد ضرر برای پوشش کارمزد و سود تمیز
+        sl = price - (1.6 * effective_atr)
+        tp1 = price + (1.4 * effective_atr)  # TP1 بهینه‌شده برای پوشش کامل کارمزد + سود واقعی
+        tp2 = price + (2.4 * effective_atr)
+        tp3 = price + (3.4 * effective_atr)
     elif trend_1h == 'BEARISH' and ema20 < ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and not pd.isna(rsi_slope) and 32 < rsi < 50 and rsi_slope < 0:
         signal_type = 'SHORT'
-        sl = price + (1.8 * effective_atr)
-        tp1 = price - (1.2 * effective_atr)
-        tp2 = price - (2.2 * effective_atr)
-        tp3 = price - (3.2 * effective_atr)
+        sl = price + (1.6 * effective_atr)
+        tp1 = price - (1.4 * effective_atr)
+        tp2 = price - (2.4 * effective_atr)
+        tp3 = price - (3.4 * effective_atr)
 
     if not signal_type:
         return False
@@ -295,7 +291,7 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال ۳۰ دقیقه (Margin: 25$ + Weekend Filter)\n"
+        f"{icon} سیگنال ۳۰ دقیقه (Optimized TP & Fee)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
@@ -449,7 +445,7 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': False, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (۳۰٪ حجم بسته شد!). SL به نقطه ورود منتقل و امن شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (کارمزد پوشش داده شد + سود ۳۰٪ حجم!). SL امن شد.", reply_to_message_id=p.get('msg_id'))
                     else: # SHORT
                         if curr <= p['tp3'] and not p.get('hit_tp3', False):
                             p['hit_tp3'] = True
@@ -484,7 +480,7 @@ def automated_price_monitor():
                                 'hit_tp1': True, 'hit_tp2': False, 'hit_tp3': False
                             })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (۳۰٪ حجم بسته شد!). SL به نقطه ورود منتقل و امن شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (کارمزد پوشش داده شد + سود ۳۰٪ حجم!). SL امن شد.", reply_to_message_id=p.get('msg_id'))
 
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
@@ -536,7 +532,7 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (Margin 25$ + Weekend Filter):\n"
+                                    f"📊 گزارش جامع حساب دمو (Optimized TP & Fee):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
                                     f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
@@ -553,16 +549,16 @@ def start_telegram_bot():
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• تایم‌فریم: ۳۰ دقیقه + مومنتوم RSI 🚀\n"
+                                    f"• تایم‌فریم: ۳۰ دقیقه (بهینه‌سازی کارمزد TP1) 🚀\n"
                                     f"• مارجین پایه هر معامله: {DEFAULT_MARGIN} $\n"
-                                    f"• فیلتر آخر هفته (Weekend Filter): فعال ✅\n"
+                                    f"• فیلتر آخر هفته: فعال ✅\n"
                                 )
                                 send_bale_message(chat_id, status_msg)
                             elif data_action == 'test_signal':
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال (مارجین ۲۵ دلاری)**\n"
+                                    f"🚀 **تست سیگنال (بهینه‌سازی کارمزد)**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -615,7 +611,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با مارجین ۲۵ دلاری و فیلتر آخر هفته فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با اهداف بهینه‌شده (پوشش کارمزد + سود تمیز) فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
