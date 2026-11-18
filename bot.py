@@ -37,7 +37,7 @@ def log_error_to_bale(error_msg):
 
 @app.route('/')
 def home():
-    return "Pro 30m Bot (Optimized TP & Fees) is running!", 200
+    return "Pro 30m Bot (ADX Trend Filter + Clean Stats) is running!", 200
 
 def load_database():
     if os.path.exists(DB_FILE):
@@ -174,6 +174,27 @@ def fetch_current_price(symbol):
     except Exception as e:
         return None
 
+def calculate_adx(df, period=14):
+    alpha = 1 / period
+    df['tr0'] = abs(df['high'] - df['low'])
+    df['tr1'] = abs(df['high'] - df['close'].shift())
+    df['tr2'] = abs(df['low'] - df['close'].shift())
+    df['tr'] = pd.concat([df['tr0'], df['tr1'], df['tr2']], axis=1).max(axis=1)
+    
+    df['up_move'] = df['high'] - df['high'].shift()
+    df['down_move'] = df['low'].shift() - df['low']
+    
+    df['plus_dm'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0.0)
+    df['minus_dm'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0.0)
+    
+    df['tr_smoothed'] = df['tr'].ewm(alpha=alpha, adjust=False).mean()
+    df['plus_di'] = 100 * (df['plus_dm'].ewm(alpha=alpha, adjust=False).mean() / df['tr_smoothed'])
+    df['minus_di'] = 100 * (df['minus_dm'].ewm(alpha=alpha, adjust=False).mean() / df['tr_smoothed'])
+    
+    df['dx'] = 100 * abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di'])
+    df['adx'] = df['dx'].ewm(alpha=alpha, adjust=False).mean()
+    return df['adx']
+
 def calculate_indicators(df):
     df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
     df['ema50'] = df['close'].ewm(span=50, adjust=False).mean()
@@ -191,6 +212,7 @@ def calculate_indicators(df):
     low_close = np.abs(df['low'] - df['close'].shift())
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['atr'] = true_range.rolling(window=14).mean()
+    df['adx'] = calculate_adx(df)
     return df
 
 def get_market_trend_and_higher_atr(symbol):
@@ -248,8 +270,13 @@ def analyze_and_open_position(symbol):
     atr = last['atr']
     volume = last['volume']
     vol_ma20 = last['vol_ma20']
+    adx = last['adx']
 
-    if pd.isna(atr) or atr <= 0:
+    if pd.isna(atr) or atr <= 0 or pd.isna(adx):
+        return False
+
+    # فیلتر قدرت روند: ADX باید بالای 22 باشد تا بازار رنج فیلتر شود
+    if adx < 22:
         return False
 
     trend_1h, atr_1h = get_market_trend_and_higher_atr(symbol)
@@ -261,9 +288,8 @@ def analyze_and_open_position(symbol):
 
     if trend_1h == 'BULLISH' and ema20 > ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and not pd.isna(rsi_slope) and 50 < rsi < 68 and rsi_slope > 0:
         signal_type = 'LONG'
-        # تنظیمات جدید و بهینه‌شده‌ی اهداف و حد ضرر برای پوشش کارمزد و سود تمیز
         sl = price - (1.6 * effective_atr)
-        tp1 = price + (1.4 * effective_atr)  # TP1 بهینه‌شده برای پوشش کامل کارمزد + سود واقعی
+        tp1 = price + (1.4 * effective_atr)
         tp2 = price + (2.4 * effective_atr)
         tp3 = price + (3.4 * effective_atr)
     elif trend_1h == 'BEARISH' and ema20 < ema50 and ema_spread and is_high_volume and not pd.isna(rsi) and not pd.isna(rsi_slope) and 32 < rsi < 50 and rsi_slope < 0:
@@ -283,6 +309,7 @@ def analyze_and_open_position(symbol):
         'symbol': symbol, 'type': signal_type, 'entry': price, 'sl': sl,
         'tp1': tp1, 'tp2': tp2, 'tp3': tp3, 'margin': DEFAULT_MARGIN, 'status': 'ACTIVE',
         'hit_tp1': False, 'hit_tp2': False, 'hit_tp3': False, 'hit_sl': False, 'risk_free': False,
+        'cumulative_pnl': -open_fee,
         'msg_id': None
     }
     ACTIVE_POSITIONS.append(pos)
@@ -291,14 +318,13 @@ def analyze_and_open_position(symbol):
     icon = "🚀" if signal_type == 'LONG' else "📉"
     
     msg = (
-        f"{icon} سیگنال ۳۰ دقیقه (Optimized TP & Fee)\n"
+        f"{icon} سیگنال ۳۰ دقیقه (ADX Filter + Strict Entry)\n"
         f"──────────────────────\n"
         f"🔹 نماد: {symbol} ({signal_type})\n"
         f"💵 قیمت ورود: `{format_price(price)}`\n"
+        f"📊 قدرت روند (ADX): `{adx:.1f}`\n"
         f"💰 مارجین: `{DEFAULT_MARGIN}$`\n"
-        f"🎯 TP1 (30%): `{format_price(tp1)}`\n"
-        f"🎯 TP2 (40%): `{format_price(tp2)}`\n"
-        f"🎯 TP3 (30%): `{format_price(tp3)}`\n"
+        f"🎯 TP1: `{format_price(tp1)}` | TP2: `{format_price(tp2)}` | TP3: `{format_price(tp3)}`\n"
         f"🛑 حد ضرر: `{format_price(sl)}`\n"
         f"──────────────────────"
     )
@@ -342,15 +368,19 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     close_fee = (margin * LEVERAGE) * FEE_RATE
     net_pnl = pnl_usd - close_fee
 
+    p['cumulative_pnl'] = p.get('cumulative_pnl', 0.0) + net_pnl
+    final_trade_pnl = p['cumulative_pnl']
+
     PAPER_BALANCE += net_pnl
     p['status'] = 'CLOSED'
     p['exit_price'] = exit_price
-    p['pnl'] = net_pnl
+    p['pnl'] = final_trade_pnl
 
+    # ثبت یک معامله‌ی کامل در تاریخچه برای محاسبه صحیح وین‌ریت
     TRADE_HISTORY.append({
         'symbol': p['symbol'], 
         'type': position_type, 
-        'pnl': net_pnl,
+        'pnl': final_trade_pnl,
         'hit_tp1': p.get('hit_tp1', False),
         'hit_tp2': p.get('hit_tp2', False),
         'hit_tp3': p.get('hit_tp3', False)
@@ -361,13 +391,13 @@ def close_position_completely(p, exit_price, reason="SL_HIT"):
     save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
 
     report_text = (
-        f"📢 گزارش بسته شدن معامله\n"
+        f"📢 گزارش اتمام معامله\n"
         f"──────────────────────\n"
         f"🔹 نماد: {p['symbol']} ({position_type})\n"
         f"💵 قیمت ورود: `{format_price(entry)}`\n"
-        f"🏁 قیمت خروج ({reason}): `{format_price(exit_price)}`\n"
-        f"💰 سود / زیان خالص: `{net_pnl:+.2f} $`\n"
-        f"💳 موجودی جدید حساب دمو: `{PAPER_BALANCE:.2f} $`\n"
+        f"🏁 وضعیت خروج: {reason}\n"
+        f"💰 سود/زیان خالص این معامله: `{final_trade_pnl:+.2f} $`\n"
+        f"💳 موجودی کل حساب: `{PAPER_BALANCE:.2f} $`\n"
         f"──────────────────────"
     )
     if ADMIN_CHAT_ID:
@@ -410,13 +440,14 @@ def automated_price_monitor():
                     if 'hit_tp2' not in p: p['hit_tp2'] = False
                     if 'hit_tp3' not in p: p['hit_tp3'] = False
                     if 'hit_sl' not in p: p['hit_sl'] = False
+                    if 'cumulative_pnl' not in p: p['cumulative_pnl'] = 0.0
 
                     if p_type == 'LONG':
                         if curr >= p['tp3'] and not p.get('hit_tp3', False):
                             p['hit_tp3'] = True
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
-                            close_position_completely(p, curr, reason="هدف نهایی TP3 (30% پایانی)")
+                            close_position_completely(p, curr, reason="هدف نهایی TP3 (تسویه کامل)")
                             continue
                         elif curr >= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
@@ -425,13 +456,10 @@ def automated_price_monitor():
                             pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
                             net_part = pnl_part - fee_part
+                            p['cumulative_pnl'] += net_part
                             PAPER_BALANCE += net_part
-                            TRADE_HISTORY.append({
-                                'symbol': p['symbol'], 'type': p_type, 'pnl': net_part,
-                                'hit_tp1': True, 'hit_tp2': True, 'hit_tp3': False
-                            })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد و SL به TP1 قفل شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد و SL به TP1 منتقل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr >= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
                             p['sl'] = entry + (entry * 0.0005)
@@ -439,19 +467,16 @@ def automated_price_monitor():
                             pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.3
                             fee_part = (margin * LEVERAGE * 0.3) * FEE_RATE
                             net_part = pnl_part - fee_part
+                            p['cumulative_pnl'] += net_part
                             PAPER_BALANCE += net_part
-                            TRADE_HISTORY.append({
-                                'symbol': p['symbol'], 'type': p_type, 'pnl': net_part,
-                                'hit_tp1': True, 'hit_tp2': False, 'hit_tp3': False
-                            })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (کارمزد پوشش داده شد + سود ۳۰٪ حجم!). SL امن شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (کارمزد پوشش داده شد + ۳۰٪ حجم نقد شد). SL ریسک‌فری شد.", reply_to_message_id=p.get('msg_id'))
                     else: # SHORT
                         if curr <= p['tp3'] and not p.get('hit_tp3', False):
                             p['hit_tp3'] = True
                             p['hit_tp2'] = True
                             p['hit_tp1'] = True
-                            close_position_completely(p, curr, reason="هدف نهایی TP3 (30% پایانی)")
+                            close_position_completely(p, curr, reason="هدف نهایی TP3 (تسویه کامل)")
                             continue
                         elif curr <= p['tp2'] and not p.get('hit_tp2', False):
                             p['hit_tp2'] = True
@@ -460,13 +485,10 @@ def automated_price_monitor():
                             pnl_part = calculate_pnl(entry, p['tp2'], p_type, margin, LEVERAGE) * 0.4
                             fee_part = (margin * LEVERAGE * 0.4) * FEE_RATE
                             net_part = pnl_part - fee_part
+                            p['cumulative_pnl'] += net_part
                             PAPER_BALANCE += net_part
-                            TRADE_HISTORY.append({
-                                'symbol': p['symbol'], 'type': p_type, 'pnl': net_part,
-                                'hit_tp1': True, 'hit_tp2': True, 'hit_tp3': False
-                            })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد و SL به TP1 قفل شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP2 برای {p['symbol']} لمس شد! ۴۰٪ حجم بسته شد و SL به TP1 منتقل شد.", reply_to_message_id=p.get('msg_id'))
                         elif curr <= p['tp1'] and not p.get('hit_tp1', False):
                             p['hit_tp1'] = True
                             p['sl'] = entry - (entry * 0.0005)
@@ -474,13 +496,10 @@ def automated_price_monitor():
                             pnl_part = calculate_pnl(entry, p['tp1'], p_type, margin, LEVERAGE) * 0.3
                             fee_part = (margin * LEVERAGE * 0.3) * FEE_RATE
                             net_part = pnl_part - fee_part
+                            p['cumulative_pnl'] += net_part
                             PAPER_BALANCE += net_part
-                            TRADE_HISTORY.append({
-                                'symbol': p['symbol'], 'type': p_type, 'pnl': net_part,
-                                'hit_tp1': True, 'hit_tp2': False, 'hit_tp3': False
-                            })
                             save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (کارمزد پوشش داده شد + سود ۳۰٪ حجم!). SL امن شد.", reply_to_message_id=p.get('msg_id'))
+                            if ADMIN_CHAT_ID: send_bale_message(ADMIN_CHAT_ID, f"🎯 TP1 لمس شد (کارمزد پوشش داده شد + ۳۰٪ حجم نقد شد). SL ریسک‌فری شد.", reply_to_message_id=p.get('msg_id'))
 
                     hit_sl = (p_type == 'LONG' and curr <= p['sl']) or (p_type == 'SHORT' and curr >= p['sl'])
                     if hit_sl:
@@ -532,24 +551,24 @@ def start_telegram_bot():
                                 tp3_count = len([t for t in TRADE_HISTORY if t.get('hit_tp3', False)])
 
                                 stats_txt = (
-                                    f"📊 گزارش جامع حساب دمو (Optimized TP & Fee):\n"
+                                    f"📊 گزارش جامع حساب دمو (ADX Filter + Real WinRate):\n"
                                     f"──────────────────────\n"
                                     f"💳 موجودی کل حساب: {PAPER_BALANCE:.2f} $\n"
-                                    f"🎯 کل رویدادهای ثبت‌شده: {total_trades}\n"
+                                    f"🎯 کل معاملات بسته شده: {total_trades}\n"
                                     f"✅ موفق: {wins} | ❌ ناموفق: {losses}\n"
-                                    f"📈 **درصد وین‌ریت:** {win_rate:.1f}%\n"
-                                    f"💰 **سود/زیان خالص:** {total_pnl:+.2f} $\n\n"
+                                    f"📈 **درصد وین‌ریت واقعی:** {win_rate:.1f}%\n"
+                                    f"💰 **سود/زیان خالص کل:** {total_pnl:+.2f} $\n\n"
                                     f"📌 **آمار تفکیکی اهداف:**\n"
-                                    f"• تعداد برخورد به TP1 (30%): `{tp1_count}` بار\n"
-                                    f"• تعداد برخورد به TP2 (40%): `{tp2_count}` بار\n"
-                                    f"• تعداد برخورد به TP3 (30%): `{tp3_count}` بار\n"
+                                    f"• تعداد برخورد به TP1: `{tp1_count}` بار\n"
+                                    f"• تعداد برخورد به TP2: `{tp2_count}` بار\n"
+                                    f"• تعداد برخورد به TP3: `{tp3_count}` بار\n"
                                     f"──────────────────────"
                                 )
                                 send_bale_message(chat_id, stats_txt)
                             elif data_action == 'bot_status':
                                 status_msg = (
                                     f"⚙ وضعیت سیستم ربات:\n"
-                                    f"• تایم‌فریم: ۳۰ دقیقه (بهینه‌سازی کارمزد TP1) 🚀\n"
+                                    f"• تایم‌فریم: ۳۰ دقیقه + فیلتر قدرت روند ADX 🚀\n"
                                     f"• مارجین پایه هر معامله: {DEFAULT_MARGIN} $\n"
                                     f"• فیلتر آخر هفته: فعال ✅\n"
                                 )
@@ -558,7 +577,7 @@ def start_telegram_bot():
                                 test_sym = "BTCUSDT"
                                 test_price = fetch_current_price(test_sym) or 60000.0
                                 test_msg = (
-                                    f"🚀 **تست سیگنال (بهینه‌سازی کارمزد)**\n"
+                                    f"🚀 **تست سیگنال (فیلتر ADX)**\n"
                                     f"──────────────────────\n"
                                     f"🔹 نماد: {test_sym} (LONG)\n"
                                     f"💵 قیمت ورود: `{format_price(test_price)}`\n"
@@ -571,33 +590,6 @@ def start_telegram_bot():
                                 PAPER_BALANCE = INITIAL_BALANCE
                                 save_database([], [], ADMIN_CHAT_ID, PAPER_BALANCE)
                                 send_bale_message(chat_id, f"🔄 حساب دمو ریست شد و موجودی به {INITIAL_BALANCE} دلار برگشت.")
-                            elif data_action.startswith('tp1_') or data_action.startswith('tp2_') or data_action.startswith('tp3_') or data_action.startswith('sl_'):
-                                parts = data_action.split('_')
-                                action_type = parts[0]
-                                sym = parts[1]
-
-                                for p in ACTIVE_POSITIONS:
-                                    if p['symbol'] == sym:
-                                        margin = p.get('margin', DEFAULT_MARGIN)
-                                        if action_type == 'tp1':
-                                            p['hit_tp1'] = True
-                                            p['sl'] = p['entry'] + (p['entry'] * 0.0005 if p['type'] == 'LONG' else -p['entry'] * 0.0005)
-                                            p['risk_free'] = True
-                                            pnl_manual = calculate_pnl(p['entry'], p['tp1'], p['type'], margin, LEVERAGE) * 0.3
-                                            fee_m = (margin * LEVERAGE * 0.3) * FEE_RATE
-                                            net_m = pnl_manual - fee_m
-                                            PAPER_BALANCE += net_m
-                                            TRADE_HISTORY.append({
-                                                'symbol': sym, 'type': p['type'], 'pnl': net_m,
-                                                'hit_tp1': True, 'hit_tp2': False, 'hit_tp3': False
-                                            })
-                                            save_database(ACTIVE_POSITIONS, TRADE_HISTORY, ADMIN_CHAT_ID, PAPER_BALANCE)
-                                            edit_message_reply_markup(chat_id, message_id, get_signal_keyboard(sym, p))
-                                            send_bale_message(chat_id, f"✅ TP1 برای {sym} تایید و سود ۳۰٪ حجم ({net_m:+.2f} $) واریز شد.", reply_to_message_id=p.get('msg_id'))
-                                        elif action_type == 'sl':
-                                            p['hit_sl'] = True
-                                            close_position_completely(p, p['sl'], reason="حد ضرر دستی (SL)")
-                                            break
 
                         elif 'message' in update:
                             msg = update['message']
@@ -611,7 +603,7 @@ def start_telegram_bot():
 
                                 if text == '/start':
                                     menu = get_main_menu_keyboard()
-                                    send_bale_message(chat_id, "🤖 ربات با اهداف بهینه‌شده (پوشش کارمزد + سود تمیز) فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
+                                    send_bale_message(chat_id, "🤖 ربات با فیلتر قدرت روند (ADX) و گزارش‌گیری واقعی فعال شد.\nلطفاً از منوی زیر استفاده کنید:", reply_markup=menu)
         except Exception as e:
             time.sleep(3)
 
